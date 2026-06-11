@@ -805,6 +805,19 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					GotResult: false,
 					Reason:    "Failed to parse struct elements, found 'while'",
 				}
+			} else if GetKind(index) == TokenKind_Break {
+				// Control-flow, never struct content. Like 'if'/'while' above, bail so
+				// a `{ break ... }` after a function-call if-condition is recognised as
+				// the if-BODY, not greedily (mis)absorbed as a struct argument.
+				return ParseResult{
+					GotResult: false,
+					Reason:    "Failed to parse struct elements, found 'break'",
+				}
+			} else if GetKind(index) == TokenKind_Return {
+				return ParseResult{
+					GotResult: false,
+					Reason:    "Failed to parse struct elements, found 'return'",
+				}
 			} else if GetKind(index) == TokenKind_RightCurlyBrace {
 				break
 			} else if parseResult := ParseComma(index); parseResult.GotResult {

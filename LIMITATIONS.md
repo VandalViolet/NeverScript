@@ -25,17 +25,32 @@ level array assignment) that the compiler drops. Not yet byte-identical; harmles
 ## 2. Decompiler opcode / construct coverage
 **Status: open — the main real gap.**
 
-Known coverage gaps (all pre-existing, independent of the byte-identity work):
-- **`AU_Scripts.qb` recompile fails** — "Unrecognised token in body of code" around
-  line 1978 of its decompiled `.ns` (a `while { if SkaterCamAnimFinished Name=... {
-  break ...` region). It *decompiles* fine; the *compiler* can't re-parse some
-  construct there. This is the highest-value gap to close for full level coverage.
+Known coverage gaps:
+- **`AU_Scripts.qb` recompile — FIXED.** It used to fail ("Unrecognised token in
+  body of code") on `if <function-call condition> { break }`: the condition's
+  invocation greedily tried to absorb the `{ break }` body as a struct argument, and
+  `ParseStruct` choked on `break`. Fixed by bailing out of struct parsing on `break`/
+  `return` (control-flow, never struct content) the same way `if`/`while` already do.
+  AU_Scripts now recompiles to semantically-equivalent, stable-fixpoint bytecode.
 - **`scripts\game\menu\gamemenu_levelselect.qb` fails to decompile** — unhandled
   `0x0e` in a context the body walker doesn't expect (a menu script, not a level).
 
 Broadening coverage is best done **reactively**: when a needed script won't
 decompile/recompile, fix the specific opcode/construct it trips on (the same way the
 level-script opcodes were added).
+
+## 2b. `switch` does not round-trip byte-identically
+**Status: open / known design constraint.**
+
+The compiler has no native `switch` opcode, so the decompiler **lowers** `switch`
+statements to equivalent `if/elseif` chains (valid for THUG2's switch-on-variable
+cases, e.g. `<Difficulty_Level>`/`<TinCans>`). This is semantically equivalent and a
+stable fixpoint, but **not byte-identical**: a file with switches (e.g. AU_Scripts.qb,
++307 bytes) recompiles larger, with if-chain opcodes instead of the compact `0x3c`
+switch. Byte-identity for such files would require teaching the compiler to emit
+native `switch` bytecode. (The recompiled if-chain form is runtime-safe by
+construction — it uses the same short-if opcodes proven in-game on AU_sfx — but has
+not yet been in-game-validated for AU_Scripts specifically.)
 
 ## 3. In-game validation scope
 **Status: open.**
