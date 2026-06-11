@@ -181,6 +181,20 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			writeBytecodeForBinaryExpression(node, 0x33)
 		case AstKind_LogicalOr:
 			writeBytecodeForBinaryExpression(node, 0x32)
+		case AstKind_FlatExpression:
+			// A parenthesised expression with 2+ operators, e.g. (A = 0 or B = <c>).
+			// THUG2 stores it as one flat infix stream inside a single 0xE/0xF pair,
+			// with operator bytes inline and NO nested parentheses. Emit it verbatim.
+			data := node.Data.(AstData_FlatExpression)
+			write(0xE)
+			for i := range data.Operands {
+				if i > 0 {
+					operatorByte, _ := FlatOperatorByte(data.Operators[i-1])
+					write(operatorByte)
+				}
+				writeBytecodeForNode(data.Operands[i])
+			}
+			write(0xF)
 		case AstKind_Comment:
 			//writeBytecodeForNode(AstNode{
 			//	Kind: AstKind_String,
@@ -612,4 +626,37 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 		}
 	}
 	write(0)
+}
+
+// FlatOperatorByte maps an operator AstKind to its single THUG2 bytecode byte,
+// for use inside a flat parenthesised expression (AstKind_FlatExpression). The
+// boolean is false for operators that have no direct single-byte form here
+// (e.g. !=, which the compiler only emits via negation); the parser refuses to
+// build a flat node in that case, falling back to existing behaviour.
+func FlatOperatorByte(kind AstKind) (byte, bool) {
+	switch kind {
+	case AstKind_EqualsExpression:
+		return 0x7, true
+	case AstKind_LessThanExpression:
+		return 0x12, true
+	case AstKind_LessThanEqualsExpression:
+		return 0x13, true
+	case AstKind_GreaterThanExpression:
+		return 0x14, true
+	case AstKind_GreaterThanEqualsExpression:
+		return 0x15, true
+	case AstKind_AdditionExpression:
+		return 0xB, true
+	case AstKind_SubtractionExpression:
+		return 0xA, true
+	case AstKind_MultiplicationExpression:
+		return 0xD, true
+	case AstKind_DivisionExpression:
+		return 0xC, true
+	case AstKind_LogicalOr:
+		return 0x32, true
+	case AstKind_LogicalAnd:
+		return 0x33, true
+	}
+	return 0, false
 }

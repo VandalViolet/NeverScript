@@ -50,6 +50,7 @@ const (
 	AstKind_RandomRange
 	AstKind_EndOfFile
 	AstKind_NameTableEntry
+	AstKind_FlatExpression
 )
 
 func (astKind AstKind) String() string {
@@ -96,6 +97,7 @@ func (astKind AstKind) String() string {
 		"AstKind_RandomRange",
 		"AstKind_EndOfFile",
 		"AstKind_NameTableEntry",
+		"AstKind_FlatExpression",
 	}[astKind]
 }
 
@@ -182,6 +184,17 @@ type AstData_BinaryExpression struct {
 	RightNode AstNode
 }
 func (astData AstData_BinaryExpression) astData() {}
+
+// AstData_FlatExpression represents a parenthesised expression containing two or
+// more operators, e.g. (A = 0 or B = <c>). THUG2 stores these as a single flat
+// infix token stream between one 0xE/0xF pair (operands and operator bytes
+// inline, with no nested parentheses), so we keep the operands and operator
+// kinds as ordered lists and emit them verbatim. len(Operators) == len(Operands)-1.
+type AstData_FlatExpression struct {
+	Operands  []AstNode
+	Operators []AstKind
+}
+func (astData AstData_FlatExpression) astData() {}
 
 type AstData_Pair struct {
 	FloatNodeA AstNode

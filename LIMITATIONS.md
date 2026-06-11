@@ -52,6 +52,32 @@ native `switch` bytecode. (The recompiled if-chain form is runtime-safe by
 construction — it uses the same short-if opcodes proven in-game on AU_sfx — but has
 not yet been in-game-validated for AU_Scripts specifically.)
 
+## 2c. Chained parenthesised expressions `(A op B op C ...)` — FIXED
+**Status: FIXED (byte-identical).**
+
+The compiler used to parse only a *single* operator inside parentheses: `(A = B)`
+worked, but `(A = 0 or B = <c>)` failed ("Unrecognised token in body of code") and
+`(0.8 * 250.0 / <width>)` failed ("Incomplete assignment"). `handleBinaryOperator`
+parsed one operator, then required `)`; anything else aborted. This blocked common
+goal-NPC and UI scripts (e.g. `scripts\game\ped\Sk6Ped_StateLogic.qb`,
+`scripts\game\menu\soundoptions.qb`).
+
+THUG2 stores a parenthesised expression as one flat infix token stream between a single
+`0xE`/`0xF` pair (operands and operator bytes inline, no nested parens). The fix parses
+the whole chain into a new `AstKind_FlatExpression` (ordered operands + operator kinds)
+and emits it verbatim. Because `ParseExpression` already grabs `or`/`and` as a
+right-associative postfix, the parser **flattens that logical spine** back into the
+flat lists so mixed comparison/logical chains reassemble correctly. A single operator
+still yields the original binary node (byte-identical to before — zero regression);
+two or more yield the flat node. Operator→byte map: `=`0x7, `<`0x12, `<=`0x13, `>`0x14,
+`>=`0x15, `-`0xA `+`0xB `/`0xC `*`0xD, `or`0x32, `and`0x33 (`FlatOperatorByte`).
+
+Validated: `(A = 0 or B = <c>)` and `(0.8 * 250.0 / <width>)` compile **byte-identical**
+to the originals; the full `Sk6Ped_StateLogic.qb` now round-trips **byte-identically**
+(previously failed to recompile); AU_sfx/menu round-trips unchanged. Files: `compiler/
+ast.go` (`AstKind_FlatExpression`), `compiler/parser.go` (chaining + spine flatten),
+`compiler/output.go` (`FlatOperatorByte` + emitter).
+
 ## 3. In-game validation scope
 **Status: open.**
 

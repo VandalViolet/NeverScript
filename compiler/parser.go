@@ -554,28 +554,124 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				}
 			}
 
+			detectOperator := func(at int) (AstKind, int, bool) {
+				switch {
+				case GetKind(at) == TokenKind_Plus:
+					return AstKind_AdditionExpression, 1, true
+				case GetKind(at) == TokenKind_Minus:
+					return AstKind_SubtractionExpression, 1, true
+				case GetKind(at) == TokenKind_Asterisk:
+					return AstKind_MultiplicationExpression, 1, true
+				case GetKind(at) == TokenKind_ForwardSlash:
+					return AstKind_DivisionExpression, 1, true
+				case GetKind(at) == TokenKind_Bang && GetKind(at+1) == TokenKind_Equals:
+					return AstKind_NotEqualExpression, 2, true
+				case GetKind(at) == TokenKind_LeftAngleBracket && GetKind(at+1) == TokenKind_Equals:
+					return AstKind_LessThanEqualsExpression, 2, true
+				case GetKind(at) == TokenKind_RightAngleBracket && GetKind(at+1) == TokenKind_Equals:
+					return AstKind_GreaterThanEqualsExpression, 2, true
+				case GetKind(at) == TokenKind_RightAngleBracket:
+					return AstKind_GreaterThanExpression, 1, true
+				case GetKind(at) == TokenKind_LeftAngleBracket:
+					return AstKind_LessThanExpression, 1, true
+				case GetKind(at) == TokenKind_Equals:
+					return AstKind_EqualsExpression, 1, true
+				case GetKind(at) == TokenKind_And:
+					return AstKind_LogicalAnd, 1, true
+				case GetKind(at) == TokenKind_Or:
+					return AstKind_LogicalOr, 1, true
+				}
+				return 0, 0, false
+			}
+
+			// flattenLogicalSpine appends an operand subtree to the flat operand/
+			// operator lists, splitting any or/and that ParseExpression already grabbed
+			// (it treats or/and as right-associative postfix) so a whole parenthesised
+			// chain like (A = 0 or B = <c>) becomes one flat infix sequence.
+			var flattenLogicalSpine func(n AstNode, operands *[]AstNode, operators *[]AstKind)
+			flattenLogicalSpine = func(n AstNode, operands *[]AstNode, operators *[]AstKind) {
+				if n.Kind == AstKind_LogicalOr || n.Kind == AstKind_LogicalAnd {
+					data := n.Data.(AstData_BinaryExpression)
+					flattenLogicalSpine(data.LeftNode, operands, operators)
+					*operators = append(*operators, n.Kind)
+					flattenLogicalSpine(data.RightNode, operands, operators)
+					return
+				}
+				*operands = append(*operands, n)
+			}
+
 			handleBinaryOperator := func(astKind AstKind, size int) ParseResult {
+				// firstParseResult (left operand) and the first operator (astKind/size)
+				// have already been recognised by the caller. Parse the rest of the flat
+				// infix sequence up to ')'. A single operator yields the original binary
+				// node (byte-identical to before); two or more yield a flat node, matching
+				// THUG2's single-0xE/0xF-pair encoding for chained conditions.
+				var operands []AstNode
+				var operators []AstKind
+				flattenLogicalSpine(firstParseResult.Node, &operands, &operators)
+				consumed := 1 + firstParseResult.TokensConsumed
+
+				parseOperand := func() bool {
+					operandResult := ParseExpression(index, true)
+					if !operandResult.GotResult {
+						return false
+					}
+					index += operandResult.TokensConsumed
+					consumed += operandResult.TokensConsumed
+					flattenLogicalSpine(operandResult.Node, &operands, &operators)
+					return true
+				}
+
+				operators = append(operators, astKind)
 				index += size
-				secondInnerExpressionParseResult := ParseExpression(index, true)
-				if secondInnerExpressionParseResult.GotResult {
-					index += secondInnerExpressionParseResult.TokensConsumed
-					if GetKind(index) == TokenKind_RightParenthesis {
-						return ParseResult{
-							GotResult: true,
-							Node: AstNode{
-								Kind: astKind,
-								Data: AstData_BinaryExpression{
-									LeftNode:  firstParseResult.Node,
-									RightNode: secondInnerExpressionParseResult.Node,
-								},
+				consumed += size
+				if !parseOperand() {
+					return ParseResult{GotResult: false, Reason: "Couldn't parse binary operator expression"}
+				}
+
+				for GetKind(index) != TokenKind_RightParenthesis {
+					operatorKind, operatorSize, ok := detectOperator(index)
+					if !ok {
+						return ParseResult{GotResult: false, Reason: "Couldn't parse binary operator expression"}
+					}
+					operators = append(operators, operatorKind)
+					index += operatorSize
+					consumed += operatorSize
+					if !parseOperand() {
+						return ParseResult{GotResult: false, Reason: "Couldn't parse binary operator expression"}
+					}
+				}
+				consumed += 1
+
+				if len(operators) == 1 {
+					return ParseResult{
+						GotResult: true,
+						Node: AstNode{
+							Kind: astKind,
+							Data: AstData_BinaryExpression{
+								LeftNode:  operands[0],
+								RightNode: operands[1],
 							},
-							TokensConsumed: 2 + firstParseResult.TokensConsumed + size + secondInnerExpressionParseResult.TokensConsumed,
-						}
+						},
+						TokensConsumed: consumed,
+					}
+				}
+
+				for _, operatorKind := range operators {
+					if _, ok := FlatOperatorByte(operatorKind); !ok {
+						return ParseResult{GotResult: false, Reason: "Couldn't parse binary operator expression"}
 					}
 				}
 				return ParseResult{
-					GotResult: false,
-					Reason:    "Couldn't parse binary operator expression",
+					GotResult: true,
+					Node: AstNode{
+						Kind: AstKind_FlatExpression,
+						Data: AstData_FlatExpression{
+							Operands:  operands,
+							Operators: operators,
+						},
+					},
+					TokensConsumed: consumed,
 				}
 			}
 			if GetKind(index) == TokenKind_Plus {
