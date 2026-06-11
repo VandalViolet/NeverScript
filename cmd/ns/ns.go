@@ -173,7 +173,11 @@ func RunNeverscript(arguments CommandLineArguments) error {
 		if err != nil {
 			return err
 		}
-		decompiledCode = fmt.Sprintf("// %s decompiled with ns %s\n%s", filepath.Base(*arguments.FileToDecompile), version, decompiledCode)
+		// NOTE: deliberately NO header comment. Its trailing newline used to compile
+		// to a spurious leading 0x01, breaking byte-identity (the original AU_sfx.qb
+		// has no leading newline; AU_Scripts.qb does — and the body decompile already
+		// preserves whichever the source had). Keep the output a faithful mirror of
+		// the bytecode so recompile(decompile(x)) == x.
 
 		outputFileName := *arguments.OutputFileName
 		if outputFileName == "" {

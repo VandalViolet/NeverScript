@@ -222,6 +222,11 @@ type AstData_Random struct {
 	BranchWeights []AstNode
 	Branches [][]AstNode
 	IsNoRepeat bool // true => emit 0x40 (random2/no-repeat) instead of 0x2F
+	// Branch0Newline: does the original have a 0x01 between the offset table and
+	// the first branch? It's per-random (formatting-driven, not type-driven), so we
+	// preserve it via a newline right after `{` instead of force-emitting it. Needed
+	// for byte-identity; the offset table's +1 base depends on it.
+	Branch0Newline bool
 }
 func (astData AstData_Random) astData() {}
 

@@ -1006,6 +1006,14 @@ func Decompile(qb []byte) (string, error) {
                 }
             }
 
+            // Per-random branch-0 newline: a 0x01 sits between the offset table
+            // (which `index` now points just past) and the first branch in most —
+            // but not all — randoms. Preserve it via a newline right after `{` so
+            // the recompile is byte-identical (the offset table's +1 base depends
+            // on it). The branch bodies themselves start AFTER this newline, so the
+            // branch decompilation below is unaffected.
+            hasBranch0Newline := index < len(qb) && qb[index] == Byte_NewLine
+
             branches := make([]string, numberOfBranches)
             lastBranchSize := 0
             for i := 0; i < numberOfBranches; i++ {
@@ -1032,7 +1040,13 @@ func Decompile(qb []byte) (string, error) {
                 branches[i] = fmt.Sprintf("%d { %s }", branchWeights[i], branch)
             }
 
-            return fmt.Sprintf("%s { %s }", randomKeyword, strings.Join(branches, " ")), index - initialIndex, nil
+            // A newline right after `{` (vs a space) tells the compiler this random
+            // has the branch-0 newline; no newline => it doesn't.
+            branchSep := " "
+            if hasBranch0Newline {
+                branchSep = "\n"
+            }
+            return fmt.Sprintf("%s {%s%s }", randomKeyword, branchSep, strings.Join(branches, " ")), index - initialIndex, nil
         } else if b == Byte_RandomRange {
             index++
 
@@ -1309,7 +1323,10 @@ func Decompile(qb []byte) (string, error) {
         tableNames = append(tableNames, name)
     }
     if len(tableNames) > 0 {
-        output.WriteString("\n__register_checksums__ " + strings.Join(tableNames, " ") + "\n")
+        // No surrounding newlines: the directive emits no body bytecode, and any
+        // newline around it WOULD compile to a stray 0x01 before the trailing name
+        // table. The body's own trailing newline (already in `output`) separates it.
+        output.WriteString("__register_checksums__ " + strings.Join(tableNames, " "))
     }
 
     return output.String(), nil

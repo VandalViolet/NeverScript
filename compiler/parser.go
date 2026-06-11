@@ -1334,6 +1334,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		}
 		index++
 
+		// A newline right after `{` encodes the branch-0 newline (0x01 between the
+		// offset table and the first branch). Per-random; preserved for byte-identity.
+		branch0Newline := GetKind(index) == TokenKind_NewLine
+
 		var branchWeights []AstNode
 		var branches [][]AstNode
 		numBranches := 0
@@ -1385,9 +1389,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			Node: AstNode{
 				Kind: AstKind_Random,
 				Data: AstData_Random{
-					BranchWeights: branchWeights[:numBranches],
-					Branches:      branches[:numBranches],
-					IsNoRepeat:    isNoRepeat,
+					BranchWeights:  branchWeights[:numBranches],
+					Branches:       branches[:numBranches],
+					IsNoRepeat:     isNoRepeat,
+					Branch0Newline: branch0Newline,
 				},
 			},
 			TokensConsumed: index - oldIndex,

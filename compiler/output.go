@@ -230,10 +230,14 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 				writeLittleUint32(offset)
 			}
 
-			// The original Neversoft format places a single newline (0x01)
-			// between the offset table and the first branch; every branch offset
-			// is measured to account for it (so they get +1 below).
-			write(0x01)
+			// Most randoms place a single newline (0x01) between the offset table
+			// and the first branch, and every branch offset is measured to account
+			// for it (+1 below). But it's per-random (formatting), so emit it only
+			// when the source had it (a newline right after `{`); otherwise the
+			// offsets must NOT include the +1.
+			if data.Branch0Newline {
+				write(0x01)
+			}
 
 			// write branches (record sizes for offset calculations, record longjump positions)
 			branchSizes := make([]int, numBranches)
@@ -259,7 +263,10 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			for i := 0; i < numBranches; i++ {
 				offsetIndex := branchOffsetsIndex + (4 * i)
 
-				offsetValue := 1 // +1 for the 0x01 newline before the first branch
+				offsetValue := 0
+				if data.Branch0Newline {
+					offsetValue = 1 // +1 for the 0x01 newline before the first branch
+				}
 
 				// include next branch offsets in offsetValue
 				for j := i + 1; j < numBranches; j++ {
