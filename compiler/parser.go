@@ -3,8 +3,11 @@ package compiler
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
+
+var ptrace = os.Getenv("NS_PTRACE") != ""
 
 type ParseResult struct {
 	GotResult      bool
@@ -43,6 +46,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 	var ParseArray func(index int) ParseResult
 	var ParseStruct func(index int) ParseResult
 	var ParseNewLine func(index int) ParseResult
+	var ParseRegisterChecksums func(index int) ParseResult
 	var ParseBreak func(index int) ParseResult
 	var ParseReturn func(index int) ParseResult
 	var ParseComma func(index int) ParseResult
@@ -50,18 +54,33 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 	var GetKind func(index int) TokenKind
 	var GetToken func(index int) Token
 
+	// __register_checksums__ <name> <name> ...
+	// Registers orphan symbol names (declared in the original .qb's trailing name
+	// table but never referenced in code) so they survive recompilation. Emits no
+	// body bytecode — the names just feed the trailing name table.
+	ParseRegisterChecksums = func(index int) ParseResult {
+		if GetKind(index) != TokenKind_Identifier || GetToken(index).Data != "__register_checksums__" {
+			return ParseResult{GotResult: false}
+		}
+		start := index
+		index++
+		var names []string
+		for GetKind(index) == TokenKind_Identifier {
+			names = append(names, GetToken(index).Data)
+			index++
+		}
+		return ParseResult{
+			GotResult:      true,
+			Node:           AstNode{Kind: AstKind_NameTableEntry, Data: AstData_NameTableEntry{Names: names}},
+			TokensConsumed: index - start,
+		}
+	}
+
 	ParseRoot = func() ParseResult {
 		var bodyNodes AstNodeBuffer
 
-		// Ensure root starts with new-line
-		bodyNodes.MaybeSave(ParseResult{
-			GotResult: true,
-			Node: AstNode{
-				Kind: AstKind_NewLine,
-				Data: AstData_Empty{},
-			},
-			TokensConsumed: 1,
-		})
+		// (Original Neversoft .qb files do not begin with a leading newline, so
+		// we don't inject one — it would shift the whole file by a byte.)
 
 		// Parse root body nodes until you can't anymore
 		index := 0
@@ -121,6 +140,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		}
 
 		if parseResult := ParseComment(index); parseResult.GotResult {
+			return parseResult
+		}
+
+		if parseResult := ParseRegisterChecksums(index); parseResult.GotResult {
 			return parseResult
 		}
 
@@ -230,6 +253,18 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 
 			if parseResult := ParseRandom(index); parseResult.GotResult {
 				return parseResult
+			}
+			if GetKind(index) == TokenKind_RandomRange {
+				// randomrange (a, b) -> opcode 0x30 followed by a pair
+				pairResult := ParseExpression(index+1, false)
+				if !pairResult.GotResult {
+					return ParseResult{GotResult: false, Reason: "randomrange not followed by a (float, float) pair"}
+				}
+				return ParseResult{
+					GotResult:      true,
+					Node:           AstNode{Kind: AstKind_RandomRange, Data: AstData_UnaryExpression{Node: pairResult.Node}},
+					TokensConsumed: 1 + pairResult.TokensConsumed,
+				}
 			}
 			if GetKind(index) == TokenKind_Identifier || GetKind(index) == TokenKind_RawChecksum {
 				return ParseChecksumOrInvocation(index, allowInvocations)
@@ -573,6 +608,12 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			if GetKind(index) == TokenKind_Equals {
 				return handleBinaryOperator(AstKind_EqualsExpression, 1)
 			}
+			if GetKind(index) == TokenKind_And {
+				return handleBinaryOperator(AstKind_LogicalAnd, 1)
+			}
+			if GetKind(index) == TokenKind_Or {
+				return handleBinaryOperator(AstKind_LogicalOr, 1)
+			}
 		}
 
 		return ParseResult{
@@ -823,6 +864,15 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		}
 		index++
 
+		// The value may sit on a later line (e.g. a multi-line array/struct
+		// assignment); the bytecode preserves newlines after '=' so the
+		// decompiler emits them. Skip them before reading the value.
+		for GetKind(index) == TokenKind_NewLine ||
+			GetKind(index) == TokenKind_SingleLineComment ||
+			GetKind(index) == TokenKind_MultiLineComment {
+			index++
+		}
+
 		valueParseResult := ParseExpression(index, allowInvocations)
 		if !valueParseResult.GotResult {
 			return ParseResult{
@@ -1002,6 +1052,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 						Kind: AstKind_Checksum,
 						Data: AstData_Checksum{
 							ChecksumToken: nameToken,
+							IsRawChecksum: nameToken.Kind == TokenKind_RawChecksum,
 						},
 					},
 					DefaultParameterNodes: defaultParameters.Nodes,
@@ -1189,6 +1240,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 
 		var bodyNodes AstNodeBuffer
 		for {
+			if ptrace {
+				fmt.Fprintf(os.Stderr, "[ptrace] body idx=%d kind=%v data=%q line=%d\n", index, GetKind(index), GetToken(index).Data, GetToken(index).LineNumber)
+			}
 			if GetKind(index) == TokenKind_OutOfRange {
 				return ParseResult{
 					GotResult: true,
@@ -1236,7 +1290,14 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				bodyNodes.MaybeSave(parseResult)
 				index += parseResult.TokensConsumed
 			} else {
-				TokensNotRecognisedError(parser.Tokens[index:], "a script body node")
+				// No parser matched and index did not advance; returning an error
+				// here prevents an infinite loop on unrecognised/unsupported tokens.
+				return ParseResult{
+					GotResult:  true,
+					Error:      errors.New("Unrecognised token in body of code"),
+					LineNumber: GetToken(index).LineNumber,
+					Reason:     TokensNotRecognisedError(parser.Tokens[index:], "a script body node"),
+				}, []AstNode{}
 			}
 		}
 
@@ -1256,12 +1317,13 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 	ParseRandom = func(index int) ParseResult {
 		oldIndex := index
 
-		if GetKind(index) != TokenKind_Random {
+		if GetKind(index) != TokenKind_Random && GetKind(index) != TokenKind_Random2 {
 			return ParseResult{
 				GotResult: false,
 				Reason:    "First token in 'random' wasn't 'random'",
 			}
 		}
+		isNoRepeat := GetKind(index) == TokenKind_Random2
 		index++
 
 		if GetKind(index) != TokenKind_LeftCurlyBrace {
@@ -1325,6 +1387,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				Data: AstData_Random{
 					BranchWeights: branchWeights[:numBranches],
 					Branches:      branches[:numBranches],
+					IsNoRepeat:    isNoRepeat,
 				},
 			},
 			TokensConsumed: index - oldIndex,
@@ -1521,23 +1584,15 @@ func (this *AstNodeBuffer) MaybeSave(parseResult ParseResult) {
 	// Even if the node isn't appended, we need to count the number of tokens it consumed
 	this.TokensConsumed += parseResult.TokensConsumed
 
-	// Don't store consecutive newlines; they will break the roq decompiler.
-	if parseResult.Node.Kind == AstKind_NewLine {
-		i := this.NumNodes - 1
-		for {
-			if i < 0 {
-				break
-			}
-			earlierNode := this.Nodes[i]
-			if earlierNode.Kind == AstKind_Comment {
-				i--
-			} else if earlierNode.Kind == AstKind_NewLine {
-				return
-			} else {
-				break
-			}
-		}
-	}
+	// PRESERVE consecutive newlines. We used to drop them here ("they will break
+	// the roq decompiler"), but THUG2's real bytecode contains consecutive 0x01 New
+	// Instruction bytes (~19 spots in AU_sfx), and they are JUMP TARGETS: random
+	// branch-exit longjumps point at the second 0x01 of a double-newline (the loop-body
+	// continuation after the random). Collapsing it deletes the target byte, so the
+	// recompiler re-aimed those jumps ~16 bytes too far — into a Repeat opcode — making
+	// load-time ambient-sound loops dispatch into garbage and FREEZE Australia on load.
+	// We emit our own decompiler (not roq), which round-trips consecutive newlines, so
+	// keep them verbatim for runtime-faithful output.
 
 	this.Nodes = append(this.Nodes, parseResult.Node)
 	this.NumNodes++

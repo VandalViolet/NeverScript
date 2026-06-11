@@ -47,6 +47,7 @@ const (
 	AstKind_ArrayAccess
 	AstKind_Comma
 	AstKind_Random
+	AstKind_RandomRange
 	AstKind_EndOfFile
 	AstKind_NameTableEntry
 )
@@ -92,6 +93,7 @@ func (astKind AstKind) String() string {
 		"AstKind_ArrayAccess",
 		"AstKind_Comma",
 		"AstKind_Random",
+		"AstKind_RandomRange",
 		"AstKind_EndOfFile",
 		"AstKind_NameTableEntry",
 	}[astKind]
@@ -219,11 +221,17 @@ func (astData AstData_ArrayAccess) astData() {}
 type AstData_Random struct {
 	BranchWeights []AstNode
 	Branches [][]AstNode
+	IsNoRepeat bool // true => emit 0x40 (random2/no-repeat) instead of 0x2F
 }
 func (astData AstData_Random) astData() {}
 
+// AstData_NameTableEntry carries orphan checksum names — symbols that the
+// original .qb registered in its trailing 0x2b name table but never referenced
+// in code (e.g. `printf`). The decompiler emits them via a top-level
+// `__register_checksums__ <names...>` directive so the compiler re-adds them to
+// the name table (no body bytecode). Without this, the recompiled table drops
+// them, which e.g. blanks the on-screen combo score (printf formats it).
 type AstData_NameTableEntry struct {
-	ChecksumBytes []byte
-	Name string
+	Names []string
 }
 func (astData AstData_NameTableEntry) astData() {}

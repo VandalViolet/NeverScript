@@ -33,6 +33,8 @@ const (
 	TokenKind_BackwardSlash
 	TokenKind_Bang
 	TokenKind_Random
+	TokenKind_Random2
+	TokenKind_RandomRange
 	TokenKind_If
 	TokenKind_Else
 	TokenKind_While
@@ -74,6 +76,8 @@ func (tokenKind TokenKind) String() string {
 		"TokenKind_BackwardSlash",
 		"TokenKind_Bang",
 		"TokenKind_Random",
+		"TokenKind_Random2",
+		"TokenKind_RandomRange",
 		"TokenKind_If",
 		"TokenKind_Else",
 		"TokenKind_While",

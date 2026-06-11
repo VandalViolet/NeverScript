@@ -410,6 +410,12 @@ func LexSourceCode(lexer *Lexer) Error { // do lexical analysis (build an array 
 				} else if CanFindKeyword("script", true) {
 					SaveToken(lexer, TokenKind_Script, "script")
 					lexer.Index += 6
+				} else if CanFindKeyword("randomrange", true) {
+					SaveToken(lexer, TokenKind_RandomRange, "randomrange")
+					lexer.Index += 11
+				} else if CanFindKeyword("random2", true) {
+					SaveToken(lexer, TokenKind_Random2, "random2")
+					lexer.Index += 7
 				} else if CanFindKeyword("random", true) {
 					SaveToken(lexer, TokenKind_Random, "random")
 					lexer.Index += 6

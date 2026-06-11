@@ -5,11 +5,15 @@ import (
     "errors"
     "fmt"
     "math"
+    "os"
     "regexp"
     "strconv"
     "strings"
     "unicode"
 )
+
+var nsTrace = os.Getenv("NS_TRACE") != ""
+var traceWriter = os.Stderr
 
 const (
     Byte_EndOfFile         = 0x0
@@ -65,6 +69,9 @@ const (
     Byte_Default           = 0x3F
     Byte_RandomNoRepeat    = 0x40
     Byte_Colon             = 0x42
+    Byte_ShortIf           = 0x47
+    Byte_ShortElse         = 0x48
+    Byte_ShortBreak        = 0x49
 )
 
 func Decompile(qb []byte) (string, error) {
@@ -73,6 +80,20 @@ func Decompile(qb []byte) (string, error) {
     var DecompileBodyOfCode func(int, int, bool) (string, int, error)
     var DecompileArgument func(int, int, bool) (string, int, error)
     var checksumTable map[uint32]string
+
+    // The trailing name table in ORIGINAL ORDER. THUG2's loader requires the
+    // symbol table in its exact (hash-bucket dump) order — a reordered table loads
+    // but breaks name-dependent UI like the on-screen combo score. We can't cheaply
+    // reproduce Neversoft's hash order for arbitrary symbol sets, so we capture the
+    // original order here and re-emit it verbatim via __register_checksums__,
+    // byte-faithful for round-trips and value-mods.
+    var tableOrder []string
+
+    // Upper bound (exclusive) for DecompileBodyOfCode. Defaults to the whole file;
+    // temporarily tightened when decompiling a random's LAST branch (which has no
+    // terminating longjump) so it stops at the random's true end instead of running
+    // on into trailing post-random code at the enclosing scope.
+    bodyEndLimit := len(qb)
 
     GetByte := func(index int) (byte, error) {
         if index >= len(qb) {
@@ -91,68 +112,80 @@ func Decompile(qb []byte) (string, error) {
     }
 
     GetChecksumTable := func() (map[uint32]string, error) {
-        index := len(qb) - 1
+        // THUG2 appends a trailing block of ChecksumEntry (0x2b) records —
+        // <0x2b><hash u32><name nul-terminated> — after the script body. It maps
+        // each symbol hash back to its source name so the body's bare 0x16 hash
+        // references can be decompiled by name.
+        //
+        // The previous implementation scanned the file BACKWARDS looking for 0x2b
+        // bytes. That is fundamentally ambiguous: 0x2b also occurs *inside* hash
+        // data (e.g. crc 0xe2c4e22b is stored little-endian as 2b e2 c4 e2). The
+        // backward scan would hit that embedded 0x2b first, parse a shifted bogus
+        // entry, then set index = startOfChecksum-1 and step PAST the real opcode —
+        // silently dropping the symbol (AU_SFX_Waves01 and every other crc whose
+        // low byte is 0x2b). A symbol referenced in the body but missing from the
+        // regenerated table on recompile is a prime load-freeze suspect.
+        //
+        // Instead, find the table boundary with the real opcode walker — a throwaway
+        // body pass with an empty table; name resolution never changes how many
+        // bytes a token consumes, so bytesRead is the exact table start — then
+        // forward-parse the table, which is unambiguous (the hash is read as 4 raw
+        // bytes and can never be mistaken for an opcode).
+        checksumTable = make(map[uint32]string)
+        _, tableStart, err := DecompileBodyOfCode(0, 0, true)
+        if err != nil {
+            return nil, err
+        }
 
-        checksumTable := make(map[uint32]string)
+        table := make(map[uint32]string)
+        index := tableStart
 
-        for {
-            if index < 0 {
-                break
-            }
-
-            // find beginning of entry
+        for index < len(qb) {
             b, err := GetByte(index)
             if err != nil {
-                return checksumTable, err
+                return nil, err
             }
+            if b != Byte_ChecksumEntry {
+                break // trailing padding / end of table
+            }
+            index++
 
-            if b == Byte_ChecksumEntry {
-                startOfChecksum := index
-                // found potential checksum entry
-                index++
+            checksumBytes, err := GetBytes(index, 4)
+            if err != nil {
+                return nil, err
+            }
+            checksum := binary.LittleEndian.Uint32(checksumBytes)
+            index += 4
+            checksumNameStartIndex := index
 
-                checksumBytes, err := GetBytes(index, 4)
+            // scan null-terminated name
+            for {
+                nextByte, err := GetByte(index)
                 if err != nil {
-                    return checksumTable, err
+                    return nil, err
                 }
-
-                checksum := binary.LittleEndian.Uint32(checksumBytes)
-                index += 4
-                checksumNameStartIndex := index
-
-                // scan name of checksum
-                for {
-                    nextByte, err := GetByte(index)
-                    if err != nil {
-                        return checksumTable, err
-                    }
-                    if nextByte == 0 {
-                        index++
-                        break
-                    }
+                if nextByte == 0 {
                     index++
+                    break
                 }
-                checksumName := string(qb[checksumNameStartIndex : index-1])
-
-                // sanity check, may not be a printable checksum
-                isPrintable := false
-                for i, c := range checksumName {
-                    if !unicode.IsNumber(c) && !unicode.IsLetter(c) && c != ' ' && c != '_' {
-                        break
-                    }
-                    if i >= len(checksumName)-1 {
-                        isPrintable = true
-                    }
-                }
-                if isPrintable {
-                    checksumTable[checksum] = checksumName
-                }
-                index = startOfChecksum - 1
+                index++
             }
+            checksumName := string(qb[checksumNameStartIndex : index-1])
 
-            index--
+            // sanity check, may not be a printable checksum
+            isPrintable := len(checksumName) > 0
+            for _, c := range checksumName {
+                if !unicode.IsNumber(c) && !unicode.IsLetter(c) && c != ' ' && c != '_' {
+                    isPrintable = false
+                    break
+                }
+            }
+            if isPrintable {
+                table[checksum] = checksumName
+                tableOrder = append(tableOrder, checksumName)
+            }
         }
-        return checksumTable, nil
+        return table, nil
     }
 
     Indent := func(indentationLevel int, text string) string {
@@ -242,6 +275,19 @@ func Decompile(qb []byte) (string, error) {
         isLocal := b == Byte_Local
         if isLocal {
             index++
+        }
+
+        // Validate that we are actually at a checksum opcode. Callers such as
+        // DecompileAssignment (via DecompileArgument) speculatively try to parse
+        // a checksum and rely on a clean error to fall back; without this check a
+        // non-checksum byte (e.g. a newline) is consumed as 4 bytes of garbage,
+        // which can false-positive as an assignment and derail the whole parse.
+        opByte, err := GetByte(index)
+        if err != nil {
+            return "", 0, err
+        }
+        if opByte != Byte_Checksum {
+            return "", 0, DecompilerError("Expected checksum byte", opByte, index)
         }
 
         index++
@@ -340,9 +386,19 @@ func Decompile(qb []byte) (string, error) {
 
         firstIteration := true
         for {
+            // Stop at the active body limit (set while decompiling a random's last
+            // branch) — treated exactly like hitting a scope terminator.
+            if index >= bodyEndLimit {
+                break
+            }
+
             b, err := GetByte(index)
             if err != nil {
                 return "", 0, err
+            }
+
+            if nsTrace {
+                fmt.Fprintf(traceWriter, "[trace] idx=0x%x byte=0x%x depth=%d\n", index, b, indentationLevel)
             }
 
             appendSpace := !firstIteration && b != Byte_Comma && currentLineCode.Len() > 0
@@ -376,6 +432,87 @@ func Decompile(qb []byte) (string, error) {
             } else if b == Byte_Break {
                 index++
                 currentLineCode.WriteString("break")
+            } else if b == Byte_ShortBreak {
+                // THUG2 optimized break: opcode + 2-byte offset to break target.
+                // If the offset (measured from this opcode) lands on an endswitch
+                // byte, this is a switch case's terminating break: stop the case
+                // body here and leave the opcode for the switch handler to consume.
+                offsetBytes, err := GetBytes(index+1, 2)
+                if err != nil {
+                    return "", 0, err
+                }
+                target := index + int(binary.LittleEndian.Uint16(offsetBytes))
+                if tb, _ := GetByte(target); tb == Byte_EndSwitch {
+                    break
+                }
+                // Otherwise it's an ordinary break; the offset is recomputed on recompile.
+                index++
+                index += 2
+                currentLineCode.WriteString("break")
+            } else if b == Byte_ShortIf {
+                // THUG2 optimized if: opcode + 2-byte offset to the matching
+                // else/endif. We parse structurally (skipping the offset) and rely on
+                // ShortElse/Else/EndIf as block terminators, exactly like the long form.
+                index++
+                index += 2
+
+                conditionCode, bytesRead, err := DecompileExpression(index, indentationLevel, true, shouldPadEquals)
+                if err != nil {
+                    return "", 0, err
+                }
+                index += bytesRead
+
+                ifBodyCode, bytesRead, err := DecompileBodyOfCode(index, indentationLevel+1, true)
+                if err != nil {
+                    return "", 0, err
+                }
+                index += bytesRead
+
+                nextByte, err := GetByte(index)
+                if err != nil {
+                    return "", 0, err
+                }
+
+                if nextByte == Byte_ShortElse || nextByte == Byte_Else {
+                    index++
+                    if nextByte == Byte_ShortElse {
+                        index += 2 // skip short offset to endif
+                    }
+
+                    elseBodyCode, bytesRead, err := DecompileBodyOfCode(index, indentationLevel+1, true)
+                    if err != nil {
+                        return "", 0, err
+                    }
+                    index += bytesRead
+
+                    currentLineCode.WriteString(fmt.Sprintf("if %s {%s", conditionCode, ifBodyCode))
+                    if strings.Contains(currentLineCode.String(), "\n") {
+                        flushCurrentLine()
+                    }
+
+                    currentLineCode.WriteString(fmt.Sprintf("} else {%s", elseBodyCode))
+                    if strings.Contains(currentLineCode.String(), "\n") {
+                        flushCurrentLine()
+                    }
+
+                    currentLineCode.WriteString("}")
+                } else {
+                    currentLineCode.WriteString(fmt.Sprintf("if %s {%s", conditionCode, ifBodyCode))
+                    if strings.Contains(currentLineCode.String(), "\n") {
+                        flushCurrentLine()
+                    }
+                    currentLineCode.WriteString("}")
+                }
+
+                nextByte, err = GetByte(index)
+                if err != nil {
+                    return "", 0, err
+                }
+
+                if nextByte != Byte_EndIf {
+                    return "", 0, DecompilerError("No endif byte (short if)", nextByte, index)
+                }
+                index++
             } else if b == Byte_If {
                 index++
 
@@ -406,7 +543,7 @@ func Decompile(qb []byte) (string, error) {
 
                     index += bytesRead
 
-                    currentLineCode.WriteString(fmt.Sprintf("if (%s) {%s", conditionCode, ifBodyCode))
+                    currentLineCode.WriteString(fmt.Sprintf("if %s {%s", conditionCode, ifBodyCode))
                     if strings.Contains(currentLineCode.String(), "\n") {
                         flushCurrentLine()
                     }
@@ -418,7 +555,7 @@ func Decompile(qb []byte) (string, error) {
 
                     currentLineCode.WriteString("}")
                 } else {
-                    currentLineCode.WriteString(fmt.Sprintf("if (%s) {%s", conditionCode, ifBodyCode))
+                    currentLineCode.WriteString(fmt.Sprintf("if %s {%s", conditionCode, ifBodyCode))
                     if strings.Contains(currentLineCode.String(), "\n") {
                         flushCurrentLine()
                     }
@@ -443,7 +580,7 @@ func Decompile(qb []byte) (string, error) {
                 }
                 index += bytesRead
 
-                currentLineCode.WriteString(fmt.Sprintf("loop {%s", whileBodyCode))
+                currentLineCode.WriteString(fmt.Sprintf("while {%s", whileBodyCode))
                 if strings.Contains(currentLineCode.String(), "\n") {
                     flushCurrentLine()
                 }
@@ -489,6 +626,12 @@ func Decompile(qb []byte) (string, error) {
                 }
                 currentLineCode.WriteString("}")
             } else if b == Byte_Switch {
+                // THUG2 switch/case (0x3C value (0x3E 0x49<off> caseValue body)* (0x3F body)? 0x3D).
+                // The NeverScript compiler has no switch support and the 0x49
+                // case-break offsets are awkward to re-emit, so we lower the
+                // switch to an equivalent if/elseif chain (semantically identical
+                // for the switch-on-variable form these scripts use), which the
+                // compiler handles via its proven if/else path.
                 index++
 
                 switchVariableCode, bytesRead, err := DecompileChecksum(index)
@@ -497,31 +640,100 @@ func Decompile(qb []byte) (string, error) {
                 }
                 index += bytesRead
 
-                switchBodyCode, bytesRead, err := DecompileBodyOfCode(index, indentationLevel+1, true)
-                if err != nil {
-                    return "", 0, err
-                }
-                index += bytesRead
+                var caseValues []string
+                var caseBodies []string
+                hasDefault := false
+                defaultBody := ""
 
-                nextByte, err := GetByte(index)
-                if err != nil {
-                    return "", 0, err
+                for {
+                    _, bytesRead, err := DecompileConsecutiveNewLines(index)
+                    if err != nil {
+                        return "", 0, err
+                    }
+                    index += bytesRead
+
+                    nb, err := GetByte(index)
+                    if err != nil {
+                        return "", 0, err
+                    }
+
+                    if nb == Byte_EndSwitch {
+                        index++
+                        break
+                    } else if nb == Byte_Case {
+                        index++
+                        // skip the case-intro short-break (0x49 + 2-byte offset)
+                        if sb, _ := GetByte(index); sb == Byte_ShortBreak {
+                            index += 3
+                        }
+                        valueCode, br, err := DecompileExpression(index, indentationLevel, false, false)
+                        if err != nil {
+                            return "", 0, err
+                        }
+                        index += br
+
+                        bodyCode, br, err := DecompileBodyOfCode(index, indentationLevel+1, true)
+                        if err != nil {
+                            return "", 0, err
+                        }
+                        index += br
+
+                        // consume a trailing end-of-case short-break if present
+                        if sb, _ := GetByte(index); sb == Byte_ShortBreak {
+                            index += 3
+                        }
+
+                        caseValues = append(caseValues, valueCode)
+                        caseBodies = append(caseBodies, bodyCode)
+                    } else if nb == Byte_Default {
+                        index++
+                        bodyCode, br, err := DecompileBodyOfCode(index, indentationLevel+1, true)
+                        if err != nil {
+                            return "", 0, err
+                        }
+                        index += br
+                        if sb, _ := GetByte(index); sb == Byte_ShortBreak {
+                            index += 3
+                        }
+                        hasDefault = true
+                        defaultBody = bodyCode
+                    } else {
+                        return "", 0, DecompilerError("Unexpected byte in switch body", nb, index)
+                    }
                 }
 
-                if nextByte != Byte_EndSwitch {
-                    return "", 0, DecompilerError("No endswitch byte", nextByte, index)
+                // build the nested if/elseif chain from innermost outward
+                chain := ""
+                hasTail := false
+                tail := ""
+                if hasDefault {
+                    tail = fmt.Sprintf("{\n%s\n}", defaultBody)
+                    hasTail = true
                 }
-                index++
+                for i := len(caseValues) - 1; i >= 0; i-- {
+                    cond := fmt.Sprintf("(%s = %s)", switchVariableCode, caseValues[i])
+                    ifPart := fmt.Sprintf("if %s {\n%s\n}", cond, caseBodies[i])
+                    if hasTail {
+                        chain = fmt.Sprintf("%s else %s", ifPart, tail)
+                    } else {
+                        chain = ifPart
+                    }
+                    tail = fmt.Sprintf("{\n%s\n}", chain)
+                    hasTail = true
+                }
 
-                currentLineCode.WriteString(fmt.Sprintf("switch {%s} {%s", switchVariableCode, switchBodyCode))
+                currentLineCode.WriteString(chain)
                 if strings.Contains(currentLineCode.String(), "\n") {
                     flushCurrentLine()
                 }
-                currentLineCode.WriteString("}")
+            } else if b == Byte_Case || b == Byte_Default {
+                // case/default only appear inside a switch body, which is parsed
+                // explicitly above; here they terminate the current (case) body.
+                break
             } else if expressionCode, bytesRead, err := DecompileExpression(index, indentationLevel, true, shouldPadEquals); err == nil {
                 currentLineCode.WriteString(expressionCode)
                 index += bytesRead
-            } else if b == Byte_EndScript || b == Byte_EndStruct || b == Byte_EndArray || b == Byte_EndIf || b == Byte_Else || b == Byte_EndWhile || b == Byte_EndSwitch || b == Byte_LongJump || b == Byte_EndOfFile || b == Byte_ChecksumEntry {
+            } else if b == Byte_EndScript || b == Byte_EndStruct || b == Byte_EndArray || b == Byte_EndIf || b == Byte_Else || b == Byte_ShortElse || b == Byte_EndWhile || b == Byte_EndSwitch || b == Byte_LongJump || b == Byte_EndOfFile || b == Byte_ChecksumEntry {
                 break
             } else {
                 return "", 0, DecompilerError("Byte not recognised in body of code", b, index)
@@ -743,6 +955,10 @@ func Decompile(qb []byte) (string, error) {
             return "<...>", index - initialIndex, nil
         } else if b == Byte_Random || b == Byte_RandomNoRepeat {
             initialIndex := index
+            randomKeyword := "random"
+            if b == Byte_RandomNoRepeat {
+                randomKeyword = "random2" // 0x40 variant (distinct opcode; preserve it)
+            }
             index++
 
             numberOfBranchesBytes, err := GetBytes(index, 4)
@@ -751,6 +967,17 @@ func Decompile(qb []byte) (string, error) {
             }
             numberOfBranches := int(binary.LittleEndian.Uint32(numberOfBranchesBytes))
             index += 4
+
+            // branch weights: one uint16 per branch (THUG2 format)
+            branchWeights := make([]int, numberOfBranches)
+            for i := 0; i < numberOfBranches; i++ {
+                weightBytes, err := GetBytes(index, 2)
+                if err != nil {
+                    return "", 0, err
+                }
+                branchWeights[i] = int(binary.LittleEndian.Uint16(weightBytes))
+                index += 2
+            }
 
             branchOffsets := make([]int, numberOfBranches)
             for i := 0; i < numberOfBranches; i++ {
@@ -763,11 +990,33 @@ func Decompile(qb []byte) (string, error) {
                 index += 4
             }
 
+            // The random's true end = the longjump target shared by every non-last
+            // branch (they all jump past the construct). The LAST branch has no such
+            // longjump, so without this bound DecompileBodyOfCode would swallow the
+            // trailing post-random code (e.g. a loop's `wait`) into it — which on
+            // recompile pushes the branch exit-jumps past that code and freezes the
+            // level on load. Compute the bound from the first branch's longjump.
+            randomEnd := -1
+            if numberOfBranches >= 2 {
+                firstBranchStart := index + branchOffsets[1] - (4 * numberOfBranches) + (4 * 2)
+                firstLongJumpPos := firstBranchStart - 5
+                ljOffsetBytes, err := GetBytes(firstLongJumpPos+1, 4)
+                if err == nil {
+                    randomEnd = firstLongJumpPos + 5 + int(int32(binary.LittleEndian.Uint32(ljOffsetBytes)))
+                }
+            }
+
             branches := make([]string, numberOfBranches)
             lastBranchSize := 0
             for i := 0; i < numberOfBranches; i++ {
                 branchIndex := index + branchOffsets[i] - (4 * numberOfBranches) + (4 * (i + 1))
+
+                savedLimit := bodyEndLimit
+                if i == numberOfBranches-1 && randomEnd > branchIndex && randomEnd <= len(qb) {
+                    bodyEndLimit = randomEnd
+                }
                 branchCode, bytesRead, err := DecompileBodyOfCode(branchIndex, indentationLevel, shouldPadEquals)
+                bodyEndLimit = savedLimit
                 if err != nil {
                     return "", 0, err
                 }
@@ -779,11 +1028,11 @@ func Decompile(qb []byte) (string, error) {
             index += lastBranchSize
 
             for i, branch := range branches {
-                // wrap each branch in {}
-                branches[i] = fmt.Sprintf("{ %s }", branch)
+                // emit "<weight> { body }" so it round-trips through the compiler
+                branches[i] = fmt.Sprintf("%d { %s }", branchWeights[i], branch)
             }
 
-            return fmt.Sprintf("random( %s )", strings.Join(branches, " ")), index - initialIndex, nil
+            return fmt.Sprintf("%s { %s }", randomKeyword, strings.Join(branches, " ")), index - initialIndex, nil
         } else if b == Byte_RandomRange {
             index++
 
@@ -797,6 +1046,13 @@ func Decompile(qb []byte) (string, error) {
             return fmt.Sprintf("randomrange%s", pairCode), index - initialIndex, nil
         } else if b == Byte_Case {
             index++
+
+            // THUG2 encodes a case as: 0x3E, then a 0x49 short-break (opcode +
+            // 2-byte offset to the next case/endswitch), then the case value.
+            if next, _ := GetByte(index); next == Byte_ShortBreak {
+                index++
+                index += 2
+            }
 
             // TODO(brandon): not so sure about allowing invocation arguments here, might need to change
             caseCode, bytesRead, err := DecompileExpression(index, indentationLevel+1, true, false)
@@ -878,7 +1134,7 @@ func Decompile(qb []byte) (string, error) {
             }
             index += bytesRead
 
-            return fmt.Sprintf("%s & %s", atomCode, nextExpression), index - initialIndex, nil
+            return fmt.Sprintf("%s and %s", atomCode, nextExpression), index - initialIndex, nil
         } else if nextByte == Byte_Or {
             index++
 
@@ -888,7 +1144,7 @@ func Decompile(qb []byte) (string, error) {
             }
             index += bytesRead
 
-            return fmt.Sprintf("%s | %s", atomCode, nextExpression), index - initialIndex, nil
+            return fmt.Sprintf("%s or %s", atomCode, nextExpression), index - initialIndex, nil
         } else if nextByte == Byte_Xor {
             index++
 
@@ -1035,6 +1291,25 @@ func Decompile(qb []byte) (string, error) {
         nextByte, _ := GetByte(index)
         message := fmt.Sprintf("Did not finish decompiling.\n%s\n0x%x/0x%x bytes decompiled.\nnext byte: 0x%x", output.String(), index, len(qb), nextByte)
         return "", errors.New(message)
+    }
+
+    // Re-emit the ENTIRE name table in original order via __register_checksums__.
+    // This both preserves orphan names (declared but never referenced, e.g. printf)
+    // AND pins the table to its exact original order, which THUG2's loader requires
+    // (a reordered table blanks the on-screen combo score). The compiler emits the
+    // trailing table from this list verbatim instead of from a Go-map (random order).
+    var tableNames []string
+    for _, name := range tableOrder {
+        // The directive parser reads identifier/keyword tokens; names with spaces
+        // (rare debug strings) can't round-trip — surface them instead of corrupting.
+        if strings.ContainsAny(name, " \t`") {
+            output.WriteString(fmt.Sprintf("\n// WARNING: name-table entry not re-declared (non-identifier name): %q\n", name))
+            continue
+        }
+        tableNames = append(tableNames, name)
+    }
+    if len(tableNames) > 0 {
+        output.WriteString("\n__register_checksums__ " + strings.Join(tableNames, " ") + "\n")
     }
 
     return output.String(), nil

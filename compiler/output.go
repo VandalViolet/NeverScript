@@ -64,6 +64,13 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 
 	nameTable := make(map[string]uint32)
 
+	// Explicit trailing-name-table order, populated by __register_checksums__
+	// directives (which the decompiler emits to pin the table to the original's
+	// order — THUG2's loader requires it). When non-empty this overrides the
+	// map-iteration order below.
+	var nameTableOrder []string
+	nameTableOrderSeen := make(map[string]bool)
+
 	var writeBytecodeForNode func(node AstNode)
 	var writeBytecodeForIf func(node AstNode)
 	var writeBytecodeForIfElse func(conditionNode AstNode, bodyNodes []AstNode, elseNodes []AstNode, hasElse bool)
@@ -109,6 +116,10 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			write(0)
 		case AstKind_Pair:
 			writeBytecodeForPair(node)
+		case AstKind_RandomRange:
+			// 0x30 followed by a pair (0x1F + two floats)
+			write(0x30)
+			writeBytecodeForNode(node.Data.(AstData_UnaryExpression).Node)
 		case AstKind_Vector:
 			writeBytecodeForVector(node)
 		case AstKind_UnaryExpression:
@@ -198,7 +209,11 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 
 			numBranches := len(data.Branches)
 
-			write(0x2F)
+			if data.IsNoRepeat {
+				write(0x40)
+			} else {
+				write(0x2F)
+			}
 			writeLittleUint32(uint32(numBranches))
 
 			// write branch weights
@@ -214,6 +229,11 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 				var offset uint32 = 2
 				writeLittleUint32(offset)
 			}
+
+			// The original Neversoft format places a single newline (0x01)
+			// between the offset table and the first branch; every branch offset
+			// is measured to account for it (so they get +1 below).
+			write(0x01)
 
 			// write branches (record sizes for offset calculations, record longjump positions)
 			branchSizes := make([]int, numBranches)
@@ -239,7 +259,7 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			for i := 0; i < numBranches; i++ {
 				offsetIndex := branchOffsetsIndex + (4 * i)
 
-				offsetValue := 0
+				offsetValue := 1 // +1 for the 0x01 newline before the first branch
 
 				// include next branch offsets in offsetValue
 				for j := i + 1; j < numBranches; j++ {
@@ -261,75 +281,12 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			}
 
 		case AstKind_WhileLoop:
-			if compiler.TargetGame == "thug2" {
-				compilerGeneratedChecksum := AstNode{
-					Kind: AstKind_Checksum,
-					Data: AstData_Checksum{
-						ChecksumToken: Token{
-							Kind: TokenKind_Identifier,
-							Data: fmt.Sprintf("__COMPILER__infinite_loop_bypasser_%d", compiler.NextLoopBypasserId),
-						},
-					},
-				}
-				compiler.NextLoopBypasserId++
-				constantIntegerNode := AstNode{
-					Kind: AstKind_Integer,
-					Data: AstData_Integer{
-						IntegerToken: Token{
-							Kind: TokenKind_Integer,
-							Data: "0",
-						},
-					},
-				}
-				writeBytecodeForNode(AstNode{
-					Kind: AstKind_Assignment,
-					Data: AstData_Assignment{
-						NameNode:  compilerGeneratedChecksum,
-						ValueNode: constantIntegerNode,
-					},
-				})
-				write(1)
-				write(0x20)
-				write(1)
-				writeBytecodeForNode(AstNode{
-					Kind: AstKind_IfStatement,
-					Data: AstData_IfStatement{
-						Conditions: []AstNode{
-							{
-								Kind: AstKind_GreaterThanExpression,
-								Data: AstData_BinaryExpression{
-									LeftNode: AstNode{
-										Kind: AstKind_LocalReference,
-										Data: AstData_LocalReference{
-											Node: compilerGeneratedChecksum,
-										},
-									},
-									RightNode: constantIntegerNode,
-								},
-							},
-						},
-						Bodies: [][]AstNode{
-							{
-								{
-									Kind: AstKind_NewLine,
-									Data: AstData_Empty{},
-								},
-								{
-									Kind: AstKind_Break,
-									Data: AstData_Empty{},
-								},
-								{
-									Kind: AstKind_NewLine,
-									Data: AstData_Empty{},
-								},
-							},
-						},
-					},
-				})
-			} else {
-				write(0x20)
-			}
-
+			// Emit a plain begin/repeat loop (0x20 ... 0x21), matching the
+			// original Neversoft bytecode. (Previously THUG2 builds injected an
+			// "infinite_loop_bypasser" guard, but it assigned a GLOBAL while the
+			// guard read an undefined LOCAL — semantically wrong and not present
+			// in real game scripts, which loop forever via an in-body `wait`.)
+			write(0x20)
 			for _, bodyNode := range node.Data.(AstData_WhileLoop).BodyNodes {
 				writeBytecodeForNode(bodyNode)
 			}
@@ -394,6 +351,17 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			writeBytecodeForNode(data.ScriptIdentifierNode)
 			for _, parameterNode := range data.ParameterNodes {
 				writeBytecodeForNode(parameterNode)
+			}
+		case AstKind_NameTableEntry:
+			// Checksum names declared via __register_checksums__: register them so
+			// they appear in the trailing name table, IN THIS ORDER, and emit NO
+			// body bytecode.
+			for _, name := range node.Data.(AstData_NameTableEntry).Names {
+				nameTable[name] = StringToChecksum(name)
+				if !nameTableOrderSeen[name] {
+					nameTableOrderSeen[name] = true
+					nameTableOrder = append(nameTableOrder, name)
+				}
 			}
 		case AstKind_Assignment:
 			data := node.Data.(AstData_Assignment)
@@ -507,7 +475,7 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			temp1 := data.ChecksumToken.Data[1:]
 			temp1 = temp1[6:8] + temp1[4:6] + temp1[2:4] + temp1[0:2]
 
-			temp2, _ := strconv.ParseInt(temp1, 16, 32)
+			temp2, _ := strconv.ParseUint(temp1, 16, 32)
 			checksum = uint32(temp2)
 		} else {
 			name := data.ChecksumToken.Data
@@ -618,8 +586,22 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 	writeBytecodeForNode(compiler.RootAstNode)
 
 	if !compiler.RemoveChecksums {
-		for name, checksum := range nameTable {
-			writeNameTableEntry(checksum, name)
+		if len(nameTableOrder) > 0 {
+			// Emit in the explicit order from __register_checksums__ (original
+			// table order, which THUG2 requires). Append any names referenced in
+			// the body but somehow not declared, so nothing is dropped.
+			for _, name := range nameTableOrder {
+				writeNameTableEntry(nameTable[name], name)
+			}
+			for name, checksum := range nameTable {
+				if !nameTableOrderSeen[name] {
+					writeNameTableEntry(checksum, name)
+				}
+			}
+		} else {
+			for name, checksum := range nameTable {
+				writeNameTableEntry(checksum, name)
+			}
 		}
 	}
 	write(0)

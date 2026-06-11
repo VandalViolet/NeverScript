@@ -130,7 +130,7 @@ func RunNeverscript(arguments CommandLineArguments) error {
 		select {
 		case result := <-compilationChannel:
 		    compilationError = result
-		case <-time.After(3 * time.Second):
+		case <-time.After(300 * time.Second):
 			return errors.New("ERROR - Compiler took too long. It probably went into an infinite loop because of a bug or an unimplemented feature")
 			fmt.Println("\nWARNING - Roq decompiler froze. Some QB cannot be decompiled, e.g. adjacent line ending bytes (0x01 0x01)")
 		}
@@ -157,7 +157,7 @@ func RunNeverscript(arguments CommandLineArguments) error {
 			select {
 			case decompiledRoq := <-roqChannel:
 				fmt.Println(decompiledRoq)
-			case <-time.After(3 * time.Second):
+			case <-time.After(300 * time.Second):
 				fmt.Println("\nWARNING - Roq decompiler froze. Some QB cannot be decompiled, e.g. adjacent line ending bytes (0x01 0x01)")
 			}
 		}
