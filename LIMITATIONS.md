@@ -67,12 +67,17 @@ blocking `mainmenu_scripts.qb`, `cutscene.qb`, `Levels.qb`, `gamemenu_options.qb
   `DecompileExpression` now consumes postfix `[idx]` subscripts after an atom (binds tighter than
   infix), applied in value context or when the atom was parenthesised (`(expr)[idx]` is
   unambiguously a subscript). Unlocked **decompilation** of `gamemenu_levelselect.qb`, `gamemenu.qb`.
-- **OPEN — `mainmenu_scripts.qb`:** a short-if body (after `if (<var> > 0)`) begins with a
-  standalone `0x00` in opcode position, then `<cks> 03(struct) … 04 21(Repeat) <var>` — a `Repeat`
-  (0x21, while-loop end) with no matching `Begin` (0x20). The `0x00` is NOT simple padding (skipping
-  it leaves the orphaned Repeat → misalignment). Likely a Begin/Repeat (while) loop form or data
-  construct the decompiler misreads. Needs deeper RE; DEFERRED (not required for the Skip-Tutorial
-  feature, which can use mainmenu_options + gameflow + Levels instead of the main-menu builder).
+- **FIXED — counted `Begin … Repeat <count>` loop:** `mainmenu_scripts.qb` uses a counted loop
+  encoded `0x00 (Begin) <body> 0x21 (Repeat) [<count-expr>]` (e.g. `Begin { make_spin_menu_item
+  {blank} } Repeat <num_blanks>`). The decompiler treated the begin `0x00` as EndOfFile and the
+  Repeat `0x21` as a count-less EndWhile. Now: inside a script body a `0x00` (not the buffer's final
+  byte) is a loop-begin; parse the body to `0x21`, then an optional count expression; render
+  `Begin {…} Repeat <count>`. (The infinite `while {}` form, begin `0x20`, is unchanged.) Unlocked
+  **decompilation** of `mainmenu_scripts.qb`. **ALL six front-end files now decompile.**
+- **Note (recompile / compiler side):** the COMPILER does not yet parse `Begin … Repeat <count>`,
+  so files using it (mainmenu_scripts) can't be recompiled until that's added — needed before the
+  main-menu can be modded. (Also still: cutscene.qb compiler "Unrecognised token" gap; switch→
+  if-chain lowering per §2b for files with switches.)
 - **Note:** decompiling ≠ recompilable. `cutscene.qb` decompiles but RECOMPILE fails (a compiler
   "Unrecognised token" gap); `Levels.qb`/`gamemenu_options.qb` recompile only via the §2b
   switch→if-chain lowering (semantically-equivalent, not byte-identical, needs in-game validation).

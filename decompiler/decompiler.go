@@ -595,6 +595,46 @@ func Decompile(qb []byte) (string, error) {
                     return "", 0, DecompilerError("No endwhile byte", nextByte, index)
                 }
                 index++
+            } else if b == Byte_EndOfFile && index < len(qb)-1 {
+                // Counted loop: 0x00 (Begin) <body> 0x21 (Repeat) [<count>].
+                // THUG2 `Begin ... Repeat <n>`. A 0x00 inside a script body is a
+                // loop-begin; the genuine end-of-file 0x00 is the buffer's final
+                // byte (handled by the top-level Decompile loop / terminator below).
+                index++
+
+                loopBodyCode, bytesRead, err := DecompileBodyOfCode(index, indentationLevel+1, shouldPadEquals)
+                if err != nil {
+                    return "", 0, err
+                }
+                index += bytesRead
+
+                nextByte, err := GetByte(index)
+                if err != nil {
+                    return "", 0, err
+                }
+                if nextByte != Byte_EndWhile {
+                    return "", 0, DecompilerError("No repeat byte (counted loop)", nextByte, index)
+                }
+                index++
+
+                // Optional repeat count expression (e.g. `Repeat <num_blanks>`).
+                countCode := ""
+                if cb, e := GetByte(index); e == nil &&
+                    (cb == Byte_Checksum || cb == Byte_Local || cb == Byte_Integer ||
+                        cb == Byte_Float || cb == Byte_Parenthesis) {
+                    cCode, cRead, cErr := DecompileExpression(index, indentationLevel, false, shouldPadEquals)
+                    if cErr != nil {
+                        return "", 0, cErr
+                    }
+                    index += cRead
+                    countCode = " " + cCode
+                }
+
+                currentLineCode.WriteString(fmt.Sprintf("Begin {%s", loopBodyCode))
+                if strings.Contains(currentLineCode.String(), "\n") {
+                    flushCurrentLine()
+                }
+                currentLineCode.WriteString(fmt.Sprintf("} Repeat%s", countCode))
             } else if b == Byte_Script {
                 index++
 
