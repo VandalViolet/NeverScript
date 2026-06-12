@@ -996,6 +996,19 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					GotResult: false,
 					Reason:    "Failed to parse struct elements, found 'return'",
 				}
+			} else if GetKind(index) == TokenKind_Begin {
+				// Control-flow (counted `Begin { ... } Repeat <n>` loop), never struct
+				// content. Bail so a `{ Begin ... }` after a function-call if-condition is
+				// recognised as the if-BODY, not greedily (mis)absorbed as a struct argument.
+				return ParseResult{
+					GotResult: false,
+					Reason:    "Failed to parse struct elements, found 'Begin'",
+				}
+			} else if GetKind(index) == TokenKind_Repeat {
+				return ParseResult{
+					GotResult: false,
+					Reason:    "Failed to parse struct elements, found 'Repeat'",
+				}
 			} else if GetKind(index) == TokenKind_RightCurlyBrace {
 				break
 			} else if parseResult := ParseComma(index); parseResult.GotResult {
