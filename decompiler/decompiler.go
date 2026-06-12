@@ -9,7 +9,6 @@ import (
     "regexp"
     "strconv"
     "strings"
-    "unicode"
 )
 
 var nsTrace = os.Getenv("NS_TRACE") != ""
@@ -172,10 +171,15 @@ func Decompile(qb []byte) (string, error) {
             }
             checksumName := string(qb[checksumNameStartIndex : index-1])
 
-            // sanity check, may not be a printable checksum
+            // sanity check, may not be a printable checksum. Accept any printable
+            // ASCII (0x20-0x7E) so real names with path separators/dots survive
+            // (e.g. `models\mainmenu_bg\mainmenu_bg.tex`); reject only control/binary
+            // bytes that indicate a non-text (raw-hash) entry. The directive emitter
+            // quotes non-identifier names so they still round-trip.
             isPrintable := len(checksumName) > 0
-            for _, c := range checksumName {
-                if !unicode.IsNumber(c) && !unicode.IsLetter(c) && c != ' ' && c != '_' {
+            for i := 0; i < len(checksumName); i++ {
+                c := checksumName[i]
+                if c < 0x20 || c > 0x7E {
                     isPrintable = false
                     break
                 }
@@ -190,6 +194,32 @@ func Decompile(qb []byte) (string, error) {
 
     Indent := func(indentationLevel int, text string) string {
         return strings.Repeat("    ", indentationLevel) + text
+    }
+
+    isPlainIdentifier := func(name string) bool {
+        if name == "" {
+            return false
+        }
+        for _, ch := range []byte(name) {
+            isAlphaNum := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') || ch == '_'
+            if !isAlphaNum {
+                return false
+            }
+        }
+        return true
+    }
+
+    isReservedWord := func(name string) bool {
+        switch name {
+        case "if", "else", "while", "Begin", "Repeat",
+            "switch", "case", "default", "endswitch",
+            "break", "script", "return",
+            "random", "random2", "randomrange",
+            "and", "or":
+            return true
+        }
+        return false
     }
 
     TrimWhitespace := func(text string) string {
@@ -297,7 +327,13 @@ func Decompile(qb []byte) (string, error) {
         var checksumCode string
         checksum := binary.LittleEndian.Uint32(checksumBytes)
         if checksumName, found := checksumTable[checksum]; found {
-            if strings.Contains(checksumName, " ") {
+            if !isPlainIdentifier(checksumName) || isReservedWord(checksumName) {
+                // Backtick-escape names that aren't plain identifiers (spaces, path
+                // separators, dots — e.g. `models\mainmenu_bg\mainmenu_bg.tex`) or
+                // that collide with a NeverScript keyword (e.g. a checksum named
+                // `default`, as in `Anim=default`). The lexer strips the backticks
+                // and treats the contents verbatim as an identifier, so neither the
+                // tokenizer nor the keyword lexing (switch/case/default/...) mis-fires.
                 checksumCode = "`" + checksumName + "`"
             } else {
                 checksumCode = checksumName
@@ -666,26 +702,35 @@ func Decompile(qb []byte) (string, error) {
                 }
                 currentLineCode.WriteString("}")
             } else if b == Byte_Switch {
-                // THUG2 switch/case (0x3C value (0x3E 0x49<off> caseValue body)* (0x3F body)? 0x3D).
-                // The NeverScript compiler has no switch support and the 0x49
-                // case-break offsets are awkward to re-emit, so we lower the
-                // switch to an equivalent if/elseif chain (semantically identical
-                // for the switch-on-variable form these scripts use), which the
-                // compiler handles via its proven if/else path.
+                // THUG2 native switch/case. The bytecode is
+                //   0x3C value 0x01
+                //   ( 0x3E 0x49<introOff> caseValue <body> 0x49<trailOff> )*
+                //   ( 0x3F 0x49<defOff> <defaultBody> )?
+                //   0x3D
+                // We emit native `switch / case <v> { } / default { } / endswitch`
+                // NeverScript and the compiler re-emits the exact bytecode (with the
+                // 0x49 short-break offsets), so switch-containing files round-trip
+                // byte-identically — the old if/elseif lowering was runtime-unsafe.
                 index++
 
                 switchVariableCode, bytesRead, err := DecompileChecksum(index)
                 if err != nil {
                     // THUG2 also allows switching on a parenthesised expression
-                    // (e.g. `switch (<expr>)`), which is not a bare checksum.
-                    // Fall back to a full expression parse; the bare-checksum
-                    // case above keeps existing output byte-identical.
+                    // (e.g. `switch (<expr>)`), or on a local var (0x2D 0x16...),
+                    // which is not a bare checksum. Fall back to a full expression
+                    // parse; the bare-checksum case above keeps output byte-identical.
                     switchVariableCode, bytesRead, err = DecompileExpression(index, indentationLevel, false, false)
                     if err != nil {
                         return "", 0, err
                     }
                 }
                 index += bytesRead
+
+                // Consume the single newline that follows the switch value. It is
+                // re-emitted unconditionally by the compiler, so we do not encode it.
+                if nl, _ := GetByte(index); nl == Byte_NewLine {
+                    index++
+                }
 
                 var caseValues []string
                 var caseBodies []string
@@ -719,13 +764,13 @@ func Decompile(qb []byte) (string, error) {
                         }
                         index += br
 
-                        bodyCode, br, err := DecompileBodyOfCode(index, indentationLevel+1, true)
+                        bodyCode, br, err := DecompileBodyOfCode(index, indentationLevel+2, true)
                         if err != nil {
                             return "", 0, err
                         }
                         index += br
 
-                        // consume a trailing end-of-case short-break if present
+                        // consume the trailing end-of-case short-break
                         if sb, _ := GetByte(index); sb == Byte_ShortBreak {
                             index += 3
                         }
@@ -734,13 +779,22 @@ func Decompile(qb []byte) (string, error) {
                         caseBodies = append(caseBodies, bodyCode)
                     } else if nb == Byte_Default {
                         index++
-                        bodyCode, br, err := DecompileBodyOfCode(index, indentationLevel+1, true)
+                        // skip the default-intro short-break (0x49 + 2-byte offset)
+                        if sb, _ := GetByte(index); sb == Byte_ShortBreak {
+                            index += 3
+                        }
+                        bodyCode, br, err := DecompileBodyOfCode(index, indentationLevel+2, true)
                         if err != nil {
                             return "", 0, err
                         }
                         index += br
+                        // default has no trailing short-break (it abuts endswitch),
+                        // but consume one defensively if some build emits it.
                         if sb, _ := GetByte(index); sb == Byte_ShortBreak {
-                            index += 3
+                            target := index + int(binary.LittleEndian.Uint16(qb[index+1:index+3]))
+                            if tb, _ := GetByte(target); tb == Byte_EndSwitch {
+                                index += 3
+                            }
                         }
                         hasDefault = true
                         defaultBody = bodyCode
@@ -749,27 +803,27 @@ func Decompile(qb []byte) (string, error) {
                     }
                 }
 
-                // build the nested if/elseif chain from innermost outward
-                chain := ""
-                hasTail := false
-                tail := ""
+                // Emit native switch syntax. Each case/default body is delimited by
+                // `{`/`}`, exactly mirroring how if-statement bodies are rendered: the
+                // body string already carries its own leading and trailing newline
+                // (the 0x01 bytes that bracket a case body), so it is placed verbatim
+                // right after `{`. An empty case body is the single string "\n", which
+                // yields `{\n}` — one newline, matching the lone 0x01 of an empty case.
+                emitBody := func(sw *strings.Builder, keyword, body string) {
+                    sw.WriteString(Indent(indentationLevel+1, fmt.Sprintf("%s {%s", keyword, body)))
+                    sw.WriteString(Indent(indentationLevel+1, "}\n"))
+                }
+                var sw strings.Builder
+                sw.WriteString(fmt.Sprintf("switch %s\n", switchVariableCode))
+                for i := range caseValues {
+                    emitBody(&sw, fmt.Sprintf("case %s", caseValues[i]), caseBodies[i])
+                }
                 if hasDefault {
-                    tail = fmt.Sprintf("{\n%s\n}", defaultBody)
-                    hasTail = true
+                    emitBody(&sw, "default", defaultBody)
                 }
-                for i := len(caseValues) - 1; i >= 0; i-- {
-                    cond := fmt.Sprintf("(%s = %s)", switchVariableCode, caseValues[i])
-                    ifPart := fmt.Sprintf("if %s {\n%s\n}", cond, caseBodies[i])
-                    if hasTail {
-                        chain = fmt.Sprintf("%s else %s", ifPart, tail)
-                    } else {
-                        chain = ifPart
-                    }
-                    tail = fmt.Sprintf("{\n%s\n}", chain)
-                    hasTail = true
-                }
+                sw.WriteString(Indent(indentationLevel, "endswitch"))
 
-                currentLineCode.WriteString(chain)
+                currentLineCode.WriteString(sw.String())
                 if strings.Contains(currentLineCode.String(), "\n") {
                     flushCurrentLine()
                 }
@@ -860,12 +914,16 @@ func Decompile(qb []byte) (string, error) {
             index += bytesRead
             return stringCode, index - initialIndex, nil
         } else if b == Byte_LocalString {
+            // LocalString (0x1C): same payload as String (0x1B) but a distinct
+            // opcode that THUG2 treats differently. Emit a `%` sigil before the
+            // string literal so the compiler re-emits 0x1C (not 0x1B), keeping the
+            // round-trip byte-identical.
             stringCode, bytesRead, err := DecompileString(index)
             if err != nil {
                 return "", 0, err
             }
             index += bytesRead
-            return stringCode, index - initialIndex, nil
+            return "%" + stringCode, index - initialIndex, nil
         } else if b == Byte_Integer {
             index++
             integerBytes, err := GetBytes(index, 4)
@@ -1387,12 +1445,25 @@ func Decompile(qb []byte) (string, error) {
     var tableNames []string
     for _, name := range tableOrder {
         // The directive parser reads identifier/keyword tokens; names with spaces
-        // (rare debug strings) can't round-trip — surface them instead of corrupting.
-        if strings.ContainsAny(name, " \t`") {
-            output.WriteString(fmt.Sprintf("\n// WARNING: name-table entry not re-declared (non-identifier name): %q\n", name))
+        // Names that aren't plain identifiers (e.g. a texture path like
+        // `models\mainmenu_bg\mainmenu_bg.tex`, or names with spaces) can't be
+        // emitted as bare directive tokens. Emit them as a quoted string literal;
+        // the directive parser accepts String tokens and re-hashes them, so they
+        // round-trip into the name table byte-faithfully.
+        if !isPlainIdentifier(name) {
+            escaped := strings.ReplaceAll(name, "\\", "\\\\")
+            escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+            tableNames = append(tableNames, "\""+escaped+"\"")
             continue
         }
-        tableNames = append(tableNames, name)
+        // Backtick-escape names colliding with a NeverScript keyword (e.g. a
+        // checksum literally named `default`) so the directive parser reads them
+        // as identifiers rather than mis-lexing them as switch/case/etc keywords.
+        if isReservedWord(name) {
+            tableNames = append(tableNames, "`"+name+"`")
+        } else {
+            tableNames = append(tableNames, name)
+        }
     }
     if len(tableNames) > 0 {
         // No surrounding newlines: the directive emits no body bytecode, and any

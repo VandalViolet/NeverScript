@@ -39,18 +39,57 @@ Broadening coverage is best done **reactively**: when a needed script won't
 decompile/recompile, fix the specific opcode/construct it trips on (the same way the
 level-script opcodes were added).
 
-## 2b. `switch` does not round-trip byte-identically
-**Status: open / known design constraint.**
+## 2b. `switch` round-trips byte-identically (native support)
+**Status: FIXED — native `switch` implemented end-to-end.**
 
-The compiler has no native `switch` opcode, so the decompiler **lowers** `switch`
-statements to equivalent `if/elseif` chains (valid for THUG2's switch-on-variable
-cases, e.g. `<Difficulty_Level>`/`<TinCans>`). This is semantically equivalent and a
-stable fixpoint, but **not byte-identical**: a file with switches (e.g. AU_Scripts.qb,
-+307 bytes) recompiles larger, with if-chain opcodes instead of the compact `0x3c`
-switch. Byte-identity for such files would require teaching the compiler to emit
-native `switch` bytecode. (The recompiled if-chain form is runtime-safe by
-construction — it uses the same short-if opcodes proven in-game on AU_sfx — but has
-not yet been in-game-validated for AU_Scripts specifically.)
+The decompiler emits native `switch`/`case`/`default`/`endswitch` NeverScript and the
+compiler re-emits the exact `0x3C … 0x3D` switch bytecode (including the `0x49`
+short-break case-intro/trailing offsets), so switch-containing files round-trip
+BYTE-IDENTICALLY. The old if/elseif **lowering** was removed; it was runtime-unsafe for
+complex front-end menu files.
+
+Bytecode layout reproduced exactly:
+```
+0x3C <value> 0x01
+  ( 0x3E 0x49<introOff> <caseValue> <body> 0x49<trailOff> )*
+  ( 0x3F 0x49<defOff> <defaultBody> )?
+0x3D
+```
+Offset formulas (LE uint16, measured FROM the `0x49` opcode position):
+- `introOff = (trailShortbreakPos + 2) - introShortbreakPos`
+- `trailOff = endswitchPos - trailShortbreakPos`
+- `defOff   = (endswitchPos - 1) - defaultShortbreakPos`
+
+NeverScript syntax (decompiler output / compiler input):
+```
+switch <value>
+    case <value> { <body> }
+    default { <body> }
+endswitch
+```
+An empty case body is `{ }` (one newline = the lone `0x01` an empty case carries).
+`switch`/`case`/`default`/`endswitch` are reserved words; a checksum literally named
+e.g. `default` (`Anim=default`) is backtick-escaped on decompile so it round-trips.
+
+Verified byte-identical: `mainmenu_scripts.qb`, `mainmenu_options.qb`, `gamemenu.qb`,
+`cutscene.qb`, `AU_Scripts.qb`, `cheats.qb` (plus the no-switch regression set stays
+byte-identical: `AU_sfx.qb`, `Sk6Ped_StateLogic.qb`, `gamemenu_pause.qb`,
+`global_flags.qb`, `displayoptions.qb`, `TR_scripts.qb`).
+
+Three pre-existing encoding bugs that the old switch-lowering had masked were also fixed
+to reach byte-identity on the front-end files:
+- **`(...)[i]` array access** corrupted the indexed base (parser set both `Array` and
+  `Index` to the subscript node).
+- **`(<x> -1)` signed-literal adjacency** — THUG2 encodes `(<x> -1)` as two adjacent
+  operands `0xE <x> <int -1> 0xF` (distinct from subtraction `(<x> - 1)` →
+  `0xE <x> 0xA <int 1> 0xF`). The lexer now lexes `-<digit>` (no space) as a signed
+  literal; binary minus always has a trailing space in decompiler output.
+- **`name =\n{…}`** dropped the newline(s) between `=` and a struct/array value
+  (`0x07 0x01 0x03`); the count is now preserved.
+- **LocalString (`0x1C`)** is now distinguished from String (`0x1B`) via the `%"…"`
+  sigil; and name-table entries that aren't plain identifiers (texture paths like
+  `models\…\…​.tex`) are emitted as quoted strings in `__register_checksums__` and
+  backtick-escaped in body references.
 
 ## 2d. Decompiler: front-end / cutscene / level scripts (the "0x0e" gap)
 **Status: switch-on-expression FIXED; more gaps open.**

@@ -13,6 +13,7 @@ const (
 	TokenKind_Equals
 	TokenKind_Integer
 	TokenKind_String
+	TokenKind_LocalString
 	TokenKind_LeftSquareBracket
 	TokenKind_RightSquareBracket
 	TokenKind_Comma
@@ -40,6 +41,10 @@ const (
 	TokenKind_While
 	TokenKind_Begin
 	TokenKind_Repeat
+	TokenKind_Switch
+	TokenKind_Case
+	TokenKind_Default
+	TokenKind_EndSwitch
 	TokenKind_Break
 	TokenKind_Return
 	TokenKind_Script
@@ -58,6 +63,7 @@ func (tokenKind TokenKind) String() string {
 		"TokenKind_Equals",
 		"TokenKind_Integer",
 		"TokenKind_String",
+		"TokenKind_LocalString",
 		"TokenKind_LeftSquareBracket",
 		"TokenKind_RightSquareBracket",
 		"TokenKind_Comma",
@@ -85,6 +91,10 @@ func (tokenKind TokenKind) String() string {
 		"TokenKind_While",
 		"TokenKind_Begin",
 		"TokenKind_Repeat",
+		"TokenKind_Switch",
+		"TokenKind_Case",
+		"TokenKind_Default",
+		"TokenKind_EndSwitch",
 		"TokenKind_Break",
 		"TokenKind_Return",
 		"TokenKind_Script",

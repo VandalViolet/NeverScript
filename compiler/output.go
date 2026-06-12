@@ -114,6 +114,17 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			writeLittleUint32(uint32(len(stringData) + 1))
 			write([]byte(stringData)...)
 			write(0)
+		case AstKind_LocalString:
+			// THUG2 LocalString (0x1C): same payload as a String (0x1B) but a
+			// distinct opcode. The `%"..."` sigil preserves the distinction.
+			write(0x1C)
+			stringData := node.Data.(AstData_String).StringToken.Data
+			stringData = stringData[1 : len(stringData)-1]
+			stringData = strings.Replace(stringData, "\\\\", "\\",-1)
+			stringData = strings.Replace(stringData, "\\\"", "\"",-1)
+			writeLittleUint32(uint32(len(stringData) + 1))
+			write([]byte(stringData)...)
+			write(0)
 		case AstKind_Pair:
 			writeBytecodeForPair(node)
 		case AstKind_RandomRange:
@@ -188,7 +199,11 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			data := node.Data.(AstData_FlatExpression)
 			write(0xE)
 			for i := range data.Operands {
-				if i > 0 {
+				// Operators[i-1] joins operand i-1 and i. When it is missing (i-1 >=
+				// len(Operators)) the operands are ADJACENT with no operator byte,
+				// which is how THUG2 encodes `(<x> -1)` (operand, signed-literal):
+				// 0xE <x> <int -1> 0xF.
+				if i > 0 && i-1 < len(data.Operators) {
 					operatorByte, _ := FlatOperatorByte(data.Operators[i-1])
 					write(operatorByte)
 				}
@@ -323,6 +338,62 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			if repeatData.HasCount {
 				writeBytecodeForNode(repeatData.CountNode)
 			}
+		case AstKind_Switch:
+			// THUG2 native switch:
+			//   0x3C value 0x01
+			//   ( 0x3E 0x49<introOff> caseValue <body> 0x49<trailOff> )*
+			//   ( 0x3F 0x49<defOff> <defaultBody> )?
+			//   0x3D
+			// 0x49 (short-break) offsets are little-endian uint16 measured FROM the
+			// 0x49 opcode position. Layout the bytes first, recording each 0x49
+			// position, then backpatch the offsets.
+			switchData := node.Data.(AstData_Switch)
+
+			write(0x3C)
+			writeBytecodeForNode(switchData.ValueNode)
+			write(0x01) // the single newline that always follows the switch value
+
+			introPositions := make([]int, len(switchData.CaseValues))
+			trailPositions := make([]int, len(switchData.CaseValues))
+			for i := range switchData.CaseValues {
+				write(0x3E)
+				introPositions[i] = len(compiler.Bytes)
+				write(0x49, 0x00, 0x00)
+				writeBytecodeForNode(switchData.CaseValues[i])
+				for _, bodyNode := range switchData.CaseBodies[i] {
+					writeBytecodeForNode(bodyNode)
+				}
+				trailPositions[i] = len(compiler.Bytes)
+				write(0x49, 0x00, 0x00)
+			}
+
+			defaultPosition := -1
+			if switchData.HasDefault {
+				write(0x3F)
+				defaultPosition = len(compiler.Bytes)
+				write(0x49, 0x00, 0x00)
+				for _, bodyNode := range switchData.DefaultBody {
+					writeBytecodeForNode(bodyNode)
+				}
+			}
+
+			endswitchPosition := len(compiler.Bytes)
+			write(0x3D)
+
+			// Backpatch short-break offsets.
+			//   introOff = (trailPos + 2) - introPos   (targets the trail SB's last offset byte)
+			//   trailOff = endswitchPos - trailPos
+			//   defOff   = (endswitchPos - 1) - defPos (targets the byte before endswitch)
+			for i := range switchData.CaseValues {
+				introOff := (trailPositions[i] + 2) - introPositions[i]
+				writeLittleUint16Index(uint16(introOff), introPositions[i]+1)
+				trailOff := endswitchPosition - trailPositions[i]
+				writeLittleUint16Index(uint16(trailOff), trailPositions[i]+1)
+			}
+			if switchData.HasDefault {
+				defOff := (endswitchPosition - 1) - defaultPosition
+				writeLittleUint16Index(uint16(defOff), defaultPosition+1)
+			}
 		case AstKind_Return:
 			data := node.Data.(AstData_UnaryExpression)
 
@@ -399,6 +470,11 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			data := node.Data.(AstData_Assignment)
 			writeBytecodeForNode(data.NameNode)
 			write(7)
+			// Re-emit newlines that sat between '=' and the value (e.g. a struct on
+			// the next line), which THUG2 stores as 0x01 bytes after the 0x07.
+			for i := 0; i < data.NewlinesAfterEquals; i++ {
+				write(1)
+			}
 			writeBytecodeForNode(data.ValueNode)
 		case AstKind_Struct:
 			write(3)

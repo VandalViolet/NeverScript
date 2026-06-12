@@ -33,6 +33,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 	var ParseBodyOfCode func(index int) (ParseResult, []AstNode)
 	var ParseWhileLoop func(index int) ParseResult
 	var ParseRepeatLoop func(index int) ParseResult
+	var ParseSwitch func(index int) ParseResult
 	var ParseLogicalNot func(index int) ParseResult
 	var ParseIfStatement func(index int) ParseResult
 	var ParseChecksumOrInvocation func(index int, allowInvocations bool) ParseResult
@@ -66,9 +67,22 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		start := index
 		index++
 		var names []string
-		for GetKind(index) == TokenKind_Identifier {
-			names = append(names, GetToken(index).Data)
-			index++
+		for {
+			if GetKind(index) == TokenKind_Identifier {
+				names = append(names, GetToken(index).Data)
+				index++
+			} else if GetKind(index) == TokenKind_String {
+				// Non-identifier names (texture paths, names with spaces) are emitted
+				// as quoted strings; strip the quotes and unescape \\ and \".
+				raw := GetToken(index).Data
+				raw = raw[1 : len(raw)-1]
+				raw = strings.ReplaceAll(raw, "\\\"", "\"")
+				raw = strings.ReplaceAll(raw, "\\\\", "\\")
+				names = append(names, raw)
+				index++
+			} else {
+				break
+			}
 		}
 		return ParseResult{
 			GotResult:      true,
@@ -282,6 +296,18 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			if GetKind(index) == TokenKind_String {
 				return ParseString(index)
 			}
+			if GetKind(index) == TokenKind_LocalString {
+				return ParseResult{
+					GotResult: true,
+					Node: AstNode{
+						Kind: AstKind_LocalString,
+						Data: AstData_String{
+							StringToken: GetToken(index),
+						},
+					},
+					TokensConsumed: 1,
+				}
+			}
 			if GetKind(index) == TokenKind_LeftParenthesis {
 				return ParseExpressionBeginningWithLeftParenthesis(index)
 			}
@@ -455,7 +481,11 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 							Node:           AstNode{
 								Kind: AstKind_ArrayAccess,
 								Data: AstData_ArrayAccess{
-									Array: secondExpressionParseResult.Node,
+									// Array is the indexed base (e.g. the `(<x>)` before
+									// `[i]`); Index is the subscript expression. (Previously
+									// both were set to the subscript, dropping the base and
+									// corrupting `(...)[...]` access bytecode.)
+									Array: expressionParseResult.Node,
 									Index: secondExpressionParseResult.Node,
 								},
 							},
@@ -673,6 +703,49 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 						},
 					},
 					TokensConsumed: consumed,
+				}
+			}
+			// Adjacent operands with NO operator between them, e.g. `(<x> -1)`
+			// where `-1` lexes as a single signed-literal token. THUG2 encodes
+			// this as 0xE <x> <int -1> 0xF (no operator byte), distinct from the
+			// binary subtraction `(<x> - 1)`. Build a FlatExpression whose operator
+			// slice is shorter than operands-1 so output emits no joining operator
+			// byte for the adjacency.
+			isOperandStart := func(at int) bool {
+				switch GetKind(at) {
+				case TokenKind_Integer, TokenKind_Float, TokenKind_String,
+					TokenKind_LocalString, TokenKind_LeftAngleBracket,
+					TokenKind_Identifier, TokenKind_RawChecksum:
+					return true
+				}
+				return false
+			}
+			if isOperandStart(index) {
+				operands := []AstNode{firstParseResult.Node}
+				operators := []AstKind{}
+				consumed := 1 + firstParseResult.TokensConsumed
+				for isOperandStart(index) {
+					operandResult := ParseExpression(index, true)
+					if !operandResult.GotResult {
+						break
+					}
+					index += operandResult.TokensConsumed
+					consumed += operandResult.TokensConsumed
+					operands = append(operands, operandResult.Node)
+				}
+				if GetKind(index) == TokenKind_RightParenthesis {
+					consumed += 1
+					return ParseResult{
+						GotResult: true,
+						Node: AstNode{
+							Kind: AstKind_FlatExpression,
+							Data: AstData_FlatExpression{
+								Operands:  operands,
+								Operators: operators,
+							},
+						},
+						TokensConsumed: consumed,
+					}
 				}
 			}
 			if GetKind(index) == TokenKind_Plus {
@@ -902,6 +975,14 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					GotResult: false,
 					Reason:    "Failed to parse struct elements, found 'while'",
 				}
+			} else if GetKind(index) == TokenKind_Switch {
+				// Control-flow, never struct content. Bail so a `{ switch ... }`
+				// after a function-call if-condition is recognised as the if-BODY,
+				// not greedily (mis)absorbed as a struct argument.
+				return ParseResult{
+					GotResult: false,
+					Reason:    "Failed to parse struct elements, found 'switch'",
+				}
 			} else if GetKind(index) == TokenKind_Break {
 				// Control-flow, never struct content. Like 'if'/'while' above, bail so
 				// a `{ break ... }` after a function-call if-condition is recognised as
@@ -975,11 +1056,16 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		index++
 
 		// The value may sit on a later line (e.g. a multi-line array/struct
-		// assignment); the bytecode preserves newlines after '=' so the
-		// decompiler emits them. Skip them before reading the value.
+		// assignment: `name =\n{ ... }`). THUG2 encodes each such newline as a 0x01
+		// after the 0x07, so count them here and re-emit them in output (byte-
+		// identity). Comments carry no bytecode, so they are skipped without count.
+		newlinesAfterEquals := 0
 		for GetKind(index) == TokenKind_NewLine ||
 			GetKind(index) == TokenKind_SingleLineComment ||
 			GetKind(index) == TokenKind_MultiLineComment {
+			if GetKind(index) == TokenKind_NewLine {
+				newlinesAfterEquals++
+			}
 			index++
 		}
 
@@ -1001,8 +1087,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			Node: AstNode{
 				Kind: AstKind_Assignment,
 				Data: AstData_Assignment{
-					NameNode:  nameParseResult.Node,
-					ValueNode: valueParseResult.Node,
+					NameNode:            nameParseResult.Node,
+					ValueNode:           valueParseResult.Node,
+					NewlinesAfterEquals: newlinesAfterEquals,
 				},
 			},
 			TokensConsumed: index - start,
@@ -1282,6 +1369,114 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		}
 	}
 
+	ParseSwitch = func(index int) ParseResult {
+		// Native THUG2 switch:
+		//   switch <value>
+		//     case <value> { <body> }
+		//     ...
+		//     default { <body> }
+		//   endswitch
+		oldIndex := index
+		if GetKind(index) != TokenKind_Switch {
+			return ParseResult{
+				GotResult: false,
+				Reason:    "First token in switch wasn't 'switch'",
+			}
+		}
+		index++
+
+		valueParseResult := ParseExpression(index, false)
+		if !valueParseResult.GotResult {
+			return ParseResult{
+				GotResult: false,
+				Reason:    WrapStr("Couldn't parse switch value", valueParseResult.Reason),
+			}
+		}
+		index += valueParseResult.TokensConsumed
+
+		// Skip formatting between the value and the first case. The single 0x01 that
+		// the bytecode places after the switch value is emitted unconditionally by
+		// the compiler, so we discard newlines/comments here.
+		skipFormatting := func() {
+			for {
+				switch GetKind(index) {
+				case TokenKind_NewLine, TokenKind_SingleLineComment, TokenKind_MultiLineComment:
+					index++
+				default:
+					return
+				}
+			}
+		}
+
+		var caseValues []AstNode
+		var caseBodies [][]AstNode
+		hasDefault := false
+		var defaultBody []AstNode
+
+		for {
+			skipFormatting()
+
+			if GetKind(index) == TokenKind_EndSwitch {
+				index++
+				break
+			} else if GetKind(index) == TokenKind_Case {
+				index++
+				caseValueParseResult := ParseExpression(index, false)
+				if !caseValueParseResult.GotResult {
+					return ParseResult{
+						GotResult: false,
+						Reason:    WrapStr("Couldn't parse case value", caseValueParseResult.Reason),
+					}
+				}
+				index += caseValueParseResult.TokensConsumed
+
+				bodyParseResult, bodyNodes := ParseBodyOfCode(index)
+				if !bodyParseResult.GotResult {
+					return ParseResult{
+						GotResult: false,
+						Reason:    WrapStr("Couldn't parse case body", bodyParseResult.Reason),
+					}
+				}
+				index += bodyParseResult.TokensConsumed
+
+				caseValues = append(caseValues, caseValueParseResult.Node)
+				caseBodies = append(caseBodies, bodyNodes)
+			} else if GetKind(index) == TokenKind_Default {
+				index++
+				bodyParseResult, bodyNodes := ParseBodyOfCode(index)
+				if !bodyParseResult.GotResult {
+					return ParseResult{
+						GotResult: false,
+						Reason:    WrapStr("Couldn't parse default body", bodyParseResult.Reason),
+					}
+				}
+				index += bodyParseResult.TokensConsumed
+				hasDefault = true
+				defaultBody = bodyNodes
+			} else {
+				return ParseResult{
+					GotResult: false,
+					Reason:    fmt.Sprintf("Unexpected token in switch body, '%s'. Expected 'case', 'default', or 'endswitch'.", GetToken(index).Data),
+				}
+			}
+		}
+
+		return ParseResult{
+			GotResult: true,
+			Node: AstNode{
+				Kind: AstKind_Switch,
+				Data: AstData_Switch{
+					ValueNode:   valueParseResult.Node,
+					CaseValues:  caseValues,
+					CaseBodies:  caseBodies,
+					HasDefault:  hasDefault,
+					DefaultBody: defaultBody,
+				},
+			},
+			TokensConsumed: index - oldIndex,
+		}
+	}
+
 	ParseLogicalNot = func(index int) ParseResult {
 		if GetKind(index) != TokenKind_Bang {
 			return ParseResult{
@@ -1456,6 +1651,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				bodyNodes.MaybeSave(parseResult)
 				index += parseResult.TokensConsumed
 			} else if parseResult := ParseReturn(index); parseResult.GotResult {
+				bodyNodes.MaybeSave(parseResult)
+				index += parseResult.TokensConsumed
+			} else if parseResult := ParseSwitch(index); parseResult.GotResult {
 				bodyNodes.MaybeSave(parseResult)
 				index += parseResult.TokensConsumed
 			} else if parseResult := ParseIfStatement(index); parseResult.GotResult {

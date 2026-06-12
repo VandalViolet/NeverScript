@@ -16,6 +16,7 @@ const (
 	AstKind_Script
 	AstKind_WhileLoop
 	AstKind_RepeatLoop
+	AstKind_Switch
 	AstKind_Break
 	AstKind_Return
 	AstKind_IfStatement
@@ -28,6 +29,7 @@ const (
 	AstKind_Float
 	AstKind_Integer
 	AstKind_String
+	AstKind_LocalString
 	AstKind_AdditionExpression
 	AstKind_SubtractionExpression
 	AstKind_MultiplicationExpression
@@ -64,6 +66,7 @@ func (astKind AstKind) String() string {
 		"AstKind_Script",
 		"AstKind_WhileLoop",
 		"AstKind_RepeatLoop",
+		"AstKind_Switch",
 		"AstKind_Break",
 		"AstKind_Return",
 		"AstKind_IfStatement",
@@ -76,6 +79,7 @@ func (astKind AstKind) String() string {
 		"AstKind_Float",
 		"AstKind_Integer",
 		"AstKind_String",
+		"AstKind_LocalString",
 		"AstKind_AdditionExpression",
 		"AstKind_SubtractionExpression",
 		"AstKind_MultiplicationExpression",
@@ -115,6 +119,10 @@ func (astData AstData_Root) astData() {}
 type AstData_Assignment struct {
 	NameNode  AstNode
 	ValueNode AstNode
+	// NewlinesAfterEquals counts newline tokens between '=' and the value (e.g. a
+	// struct/array placed on the next line: `name =\n{ ... }`). THUG2 encodes
+	// these as 0x01 bytes after the 0x07, so we preserve the count for byte-identity.
+	NewlinesAfterEquals int
 }
 func (astData AstData_Assignment) astData() {}
 
@@ -149,6 +157,22 @@ type AstData_RepeatLoop struct {
 	HasCount  bool
 }
 func (astData AstData_RepeatLoop) astData() {}
+
+// AstData_Switch is a THUG2 native switch statement. Bytecode:
+//   0x3C ValueNode 0x01
+//   ( 0x3E 0x49<introOff> CaseValues[i] CaseBodies[i] 0x49<trailOff> )*
+//   ( 0x3F 0x49<defOff> DefaultBody )?
+//   0x3D
+// CaseBodies/DefaultBody carry their own leading+trailing newline nodes (parsed
+// from the `{`/`}`-delimited body), so output emits them verbatim.
+type AstData_Switch struct {
+	ValueNode   AstNode
+	CaseValues  []AstNode
+	CaseBodies  [][]AstNode
+	HasDefault  bool
+	DefaultBody []AstNode
+}
+func (astData AstData_Switch) astData() {}
 
 type AstData_IfStatement struct {
 	Conditions            []AstNode
