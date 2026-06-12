@@ -404,6 +404,12 @@ func LexSourceCode(lexer *Lexer) Error { // do lexical analysis (build an array 
 				} else if CanFindKeyword("while", true) {
 					SaveToken(lexer, TokenKind_While, "while")
 					lexer.Index += 5
+				} else if CanFindKeyword("Begin", true) {
+					SaveToken(lexer, TokenKind_Begin, "Begin")
+					lexer.Index += 5
+				} else if CanFindKeyword("Repeat", true) {
+					SaveToken(lexer, TokenKind_Repeat, "Repeat")
+					lexer.Index += 6
 				} else if CanFindKeyword("break", true) {
 					SaveToken(lexer, TokenKind_Break, "break")
 					lexer.Index += 5

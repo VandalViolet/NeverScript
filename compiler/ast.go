@@ -15,6 +15,7 @@ const (
 	AstKind_NewLine
 	AstKind_Script
 	AstKind_WhileLoop
+	AstKind_RepeatLoop
 	AstKind_Break
 	AstKind_Return
 	AstKind_IfStatement
@@ -62,6 +63,7 @@ func (astKind AstKind) String() string {
 		"AstKind_NewLine",
 		"AstKind_Script",
 		"AstKind_WhileLoop",
+		"AstKind_RepeatLoop",
 		"AstKind_Break",
 		"AstKind_Return",
 		"AstKind_IfStatement",
@@ -137,6 +139,16 @@ type AstData_WhileLoop struct {
 	BodyNodes    []AstNode
 }
 func (astData AstData_WhileLoop) astData() {}
+
+// AstData_RepeatLoop is a counted `Begin { ... } Repeat <count>` loop.
+// Bytecode: 0x00 (Begin) <body> 0x21 (Repeat) [<count>]. HasCount is false for
+// the rare count-less form.
+type AstData_RepeatLoop struct {
+	BodyNodes []AstNode
+	CountNode AstNode
+	HasCount  bool
+}
+func (astData AstData_RepeatLoop) astData() {}
 
 type AstData_IfStatement struct {
 	Conditions            []AstNode

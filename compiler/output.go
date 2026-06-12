@@ -312,6 +312,17 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 				writeBytecodeForNode(bodyNode)
 			}
 			write(0x21)
+		case AstKind_RepeatLoop:
+			// Counted loop: 0x00 (Begin) <body> 0x21 (Repeat) [<count>].
+			repeatData := node.Data.(AstData_RepeatLoop)
+			write(0x00)
+			for _, bodyNode := range repeatData.BodyNodes {
+				writeBytecodeForNode(bodyNode)
+			}
+			write(0x21)
+			if repeatData.HasCount {
+				writeBytecodeForNode(repeatData.CountNode)
+			}
 		case AstKind_Return:
 			data := node.Data.(AstData_UnaryExpression)
 

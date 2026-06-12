@@ -38,6 +38,8 @@ const (
 	TokenKind_If
 	TokenKind_Else
 	TokenKind_While
+	TokenKind_Begin
+	TokenKind_Repeat
 	TokenKind_Break
 	TokenKind_Return
 	TokenKind_Script
@@ -81,6 +83,8 @@ func (tokenKind TokenKind) String() string {
 		"TokenKind_If",
 		"TokenKind_Else",
 		"TokenKind_While",
+		"TokenKind_Begin",
+		"TokenKind_Repeat",
 		"TokenKind_Break",
 		"TokenKind_Return",
 		"TokenKind_Script",

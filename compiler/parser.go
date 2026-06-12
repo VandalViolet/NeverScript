@@ -32,6 +32,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 	var ParseScript func(index int) ParseResult
 	var ParseBodyOfCode func(index int) (ParseResult, []AstNode)
 	var ParseWhileLoop func(index int) ParseResult
+	var ParseRepeatLoop func(index int) ParseResult
 	var ParseLogicalNot func(index int) ParseResult
 	var ParseIfStatement func(index int) ParseResult
 	var ParseChecksumOrInvocation func(index int, allowInvocations bool) ParseResult
@@ -359,7 +360,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				}
 			} else if GetKind(index) == TokenKind_And {
 				index++
-				secondExpressionParseResult := ParseExpression(index, false)
+				secondExpressionParseResult := ParseExpression(index, allowInvocations)
 				if secondExpressionParseResult.GotResult {
 					index += secondExpressionParseResult.TokensConsumed
 					return ParseResult{
@@ -376,7 +377,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				}
 			} else if GetKind(index) == TokenKind_Or {
 				index++
-				secondExpressionParseResult := ParseExpression(index, false)
+				secondExpressionParseResult := ParseExpression(index, allowInvocations)
 				if secondExpressionParseResult.GotResult {
 					index += secondExpressionParseResult.TokensConsumed
 					return ParseResult{
@@ -1201,6 +1202,57 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		}
 	}
 
+	ParseRepeatLoop = func(index int) ParseResult {
+		// Counted loop: `Begin { <body> } Repeat <count>`.
+		if GetKind(index) != TokenKind_Begin {
+			return ParseResult{
+				GotResult: false,
+				Reason:    "First token in repeat loop wasn't 'Begin'",
+			}
+		}
+		startIndex := index
+		index++
+
+		bodyParseResult, bodyNodes := ParseBodyOfCode(index)
+		if !bodyParseResult.GotResult {
+			return ParseResult{
+				GotResult: false,
+				Reason:    WrapStr("Couldn't parse Begin loop body", bodyParseResult.Reason),
+			}
+		}
+		index += bodyParseResult.TokensConsumed
+
+		if GetKind(index) != TokenKind_Repeat {
+			return ParseResult{
+				GotResult: false,
+				Reason:    "Expected 'Repeat' after Begin loop body",
+			}
+		}
+		index++
+
+		// Optional repeat-count expression (e.g. `Repeat <num_blanks>` or `Repeat 16`).
+		var countNode AstNode
+		hasCount := false
+		if countResult := ParseExpression(index, false); countResult.GotResult && countResult.Error == nil {
+			countNode = countResult.Node
+			hasCount = true
+			index += countResult.TokensConsumed
+		}
+
+		return ParseResult{
+			GotResult: true,
+			Node: AstNode{
+				Kind: AstKind_RepeatLoop,
+				Data: AstData_RepeatLoop{
+					BodyNodes: bodyNodes,
+					CountNode: countNode,
+					HasCount:  hasCount,
+				},
+			},
+			TokensConsumed: index - startIndex,
+		}
+	}
+
 	ParseLogicalNot = func(index int) ParseResult {
 		if GetKind(index) != TokenKind_Bang {
 			return ParseResult{
@@ -1381,6 +1433,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				bodyNodes.MaybeSave(parseResult)
 				index += parseResult.TokensConsumed
 			} else if parseResult := ParseWhileLoop(index); parseResult.GotResult {
+				bodyNodes.MaybeSave(parseResult)
+				index += parseResult.TokensConsumed
+			} else if parseResult := ParseRepeatLoop(index); parseResult.GotResult {
 				bodyNodes.MaybeSave(parseResult)
 				index += parseResult.TokensConsumed
 			} else if parseResult := ParseComment(index); parseResult.GotResult {
