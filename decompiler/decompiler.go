@@ -636,7 +636,14 @@ func Decompile(qb []byte) (string, error) {
 
                 switchVariableCode, bytesRead, err := DecompileChecksum(index)
                 if err != nil {
-                    return "", 0, err
+                    // THUG2 also allows switching on a parenthesised expression
+                    // (e.g. `switch (<expr>)`), which is not a bare checksum.
+                    // Fall back to a full expression parse; the bare-checksum
+                    // case above keeps existing output byte-identical.
+                    switchVariableCode, bytesRead, err = DecompileExpression(index, indentationLevel, false, false)
+                    if err != nil {
+                        return "", 0, err
+                    }
                 }
                 index += bytesRead
 

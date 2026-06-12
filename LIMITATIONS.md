@@ -52,6 +52,25 @@ native `switch` bytecode. (The recompiled if-chain form is runtime-safe by
 construction — it uses the same short-if opcodes proven in-game on AU_sfx — but has
 not yet been in-game-validated for AU_Scripts specifically.)
 
+## 2d. Decompiler: front-end / cutscene / level scripts (the "0x0e" gap)
+**Status: switch-on-expression FIXED; more gaps open.**
+
+THUG2's front-end scripts use parenthesised-expression forms the decompiler didn't handle,
+blocking `mainmenu_scripts.qb`, `cutscene.qb`, `Levels.qb`, `gamemenu_options.qb`,
+`gamemenu_levelselect.qb`, `gamemenu.qb`.
+- **FIXED — `switch (<expr>)`:** the switch decoder only accepted a bare checksum as the switch
+  value; now it falls back to `DecompileExpression` when the value is `(…)`. This unlocked
+  **decompilation** of `cutscene.qb`, `Levels.qb`, `gamemenu_options.qb`. Bare-checksum switches
+  are byte-identical to before (AU_Scripts etc. unchanged); full shipped corpus round-trips
+  byte-identically (no regression).
+- **OPEN — array subscript on an expression** `(<a>.<b>)[<c>]` (Byte_Array 0x05 as a postfix):
+  blocks `gamemenu_levelselect.qb`, `gamemenu.qb`.
+- **OPEN — `mainmenu_scripts.qb`:** a short-if body begins with a `0x00` byte (read as EndOfFile),
+  so the body bails and the short-if can't find its EndIf. Cause unclear (padding? misread). 
+- **Note:** decompiling ≠ recompilable. `cutscene.qb` decompiles but RECOMPILE fails (a compiler
+  "Unrecognised token" gap); `Levels.qb`/`gamemenu_options.qb` recompile only via the §2b
+  switch→if-chain lowering (semantically-equivalent, not byte-identical, needs in-game validation).
+
 ## 2c. Chained parenthesised expressions `(A op B op C ...)` — FIXED
 **Status: FIXED (byte-identical).**
 
