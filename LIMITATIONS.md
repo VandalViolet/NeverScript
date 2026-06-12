@@ -74,10 +74,19 @@ blocking `mainmenu_scripts.qb`, `cutscene.qb`, `Levels.qb`, `gamemenu_options.qb
   byte) is a loop-begin; parse the body to `0x21`, then an optional count expression; render
   `Begin {…} Repeat <count>`. (The infinite `while {}` form, begin `0x20`, is unchanged.) Unlocked
   **decompilation** of `mainmenu_scripts.qb`. **ALL six front-end files now decompile.**
-- **Note (recompile / compiler side):** the COMPILER does not yet parse `Begin … Repeat <count>`,
-  so files using it (mainmenu_scripts) can't be recompiled until that's added — needed before the
-  main-menu can be modded. (Also still: cutscene.qb compiler "Unrecognised token" gap; switch→
-  if-chain lowering per §2b for files with switches.)
+- **Compiler side — `Begin … Repeat <count>` + invocation operands in flat conditions: FIXED.**
+  The compiler now lexes `Begin`/`Repeat` keywords, parses `Begin { <body> } Repeat <count>`
+  (AstKind_RepeatLoop) and emits `0x00 <body> 0x21 [<count>]`; and the `and`/`or` postfix now
+  propagates `allowInvocations` so flat conditions like `(<a> = 0 and GotParam up)` parse.
+  **`mainmenu_scripts.qb` now round-trips (decompile→recompile, fixpoint stable, ~1 byte off the
+  original) — it's moddable.** `Levels.qb`/`gamemenu_options.qb` recompile (via §2b switch lowering).
+- **OPEN — `cutscene.qb`: `if ! <obj>:<method>`** (negated colon-expression condition, e.g.
+  `if ! Skater:IsSkaterOnVehicle`). `if skater:walking` and `<y> = skater:walking` both compile,
+  but `! skater:walking` does not (and negated *invocations* like `! GotParam down` DO). The
+  `ParseLogicalNot` → `ParseExpression(…, true)` path mis-handles a colon-expression operand;
+  mechanism still unclear (the same call works from `ParseIfStatement`). Blocks recompiling
+  cutscene.qb (needed for the Skip-Cutscenes toggle). Workaround used in TR: rewrite
+  `if ! a:b { X }` → `if a:b {} else { X }`.
 - **Note:** decompiling ≠ recompilable. `cutscene.qb` decompiles but RECOMPILE fails (a compiler
   "Unrecognised token" gap); `Levels.qb`/`gamemenu_options.qb` recompile only via the §2b
   switch→if-chain lowering (semantically-equivalent, not byte-identical, needs in-game validation).
