@@ -80,7 +80,17 @@ blocking `mainmenu_scripts.qb`, `cutscene.qb`, `Levels.qb`, `gamemenu_options.qb
   propagates `allowInvocations` so flat conditions like `(<a> = 0 and GotParam up)` parse.
   **`mainmenu_scripts.qb` now round-trips (decompile→recompile, fixpoint stable, ~1 byte off the
   original) — it's moddable.** `Levels.qb`/`gamemenu_options.qb` recompile (via §2b switch lowering).
-- **OPEN — `cutscene.qb`: `if ! <obj>:<method>`** (negated colon-expression condition, e.g.
+- **`cutscene.qb` `if ! <obj>:<method>` — FIXED.** `pruneStructIfInvoked` now also handles
+  `LogicalNot(ColonExpression(.., Invocation))`, so `if ! Skater:IsSkaterOnVehicle { body }` no
+  longer eats the body. cutscene.qb round-trips (fixpoint stable).
+- **Front-end recompile status: 5 of 6 round-trip** — mainmenu_scripts, cutscene, Levels,
+  gamemenu_options, gamemenu. **OPEN — `gamemenu_levelselect.qb`: pre-existing compiler
+  INFINITE-LOOP** on an invocation arg of the form `cmd key=(<localref> [<arr>] .member)` —
+  i.e. `(subscript-then-dot)` as a parenthesised value, parsed with `allowInvocations=false`
+  (also reproduces on the pre-session binary, so not a regression). `ParseExpression` spins with
+  zero progress on this construct. Deferred (level-select menu, not feature-critical). Needs a
+  0-progress fix in the expression parser's paren/array-access/dot interaction.
+- **(superseded note) `if ! <obj>:<method>`** (negated colon-expression condition, e.g.
   `if ! Skater:IsSkaterOnVehicle`). `if skater:walking` and `<y> = skater:walking` both compile,
   but `! skater:walking` does not (and negated *invocations* like `! GotParam down` DO). The
   `ParseLogicalNot` → `ParseExpression(…, true)` path mis-handles a colon-expression operand;
