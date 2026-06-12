@@ -1052,6 +1052,35 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					// reduce the number of tokens consumed by the condition
 					parseResult.TokensConsumed -= invocationData.TokensConsumedByEachParameterNode[lastParameterIndex]
 				}
+			} else if logicalNotData.Node.Kind == AstKind_ColonExpression {
+				colonData := logicalNotData.Node.Data.(AstData_BinaryExpression)
+				if colonData.RightNode.Kind == AstKind_Invocation {
+					invocationData := colonData.RightNode.Data.(AstData_Invocation)
+					lastParameterIndex := len(invocationData.ParameterNodes) - 1
+					lastParameterNode := invocationData.ParameterNodes[lastParameterIndex]
+					if lastParameterNode.Kind == AstKind_Struct {
+						// `if ! <obj>:<method> { body }` — the colon RHS invocation
+						// over-consumed the if-body as a struct arg; prune it back off.
+						parseResult.Node.Data = AstData_UnaryExpression{
+							Node: AstNode{
+								Kind: AstKind_ColonExpression,
+								Data: AstData_BinaryExpression{
+									LeftNode: colonData.LeftNode,
+									RightNode: AstNode{
+										Kind: AstKind_Invocation,
+										Data: AstData_Invocation{
+											ScriptIdentifierNode:              invocationData.ScriptIdentifierNode,
+											ParameterNodes:                    invocationData.ParameterNodes[:lastParameterIndex],
+											TokensConsumedByEachParameterNode: invocationData.TokensConsumedByEachParameterNode[:lastParameterIndex],
+										},
+									},
+								},
+							},
+						}
+						*index -= invocationData.TokensConsumedByEachParameterNode[lastParameterIndex]
+						parseResult.TokensConsumed -= invocationData.TokensConsumedByEachParameterNode[lastParameterIndex]
+					}
+				}
 			}
 		} else if parseResult.Node.Kind == AstKind_Assignment {
 			assignmentData := parseResult.Node.Data.(AstData_Assignment)
