@@ -63,10 +63,16 @@ blocking `mainmenu_scripts.qb`, `cutscene.qb`, `Levels.qb`, `gamemenu_options.qb
   **decompilation** of `cutscene.qb`, `Levels.qb`, `gamemenu_options.qb`. Bare-checksum switches
   are byte-identical to before (AU_Scripts etc. unchanged); full shipped corpus round-trips
   byte-identically (no regression).
-- **OPEN — array subscript on an expression** `(<a>.<b>)[<c>]` (Byte_Array 0x05 as a postfix):
-  blocks `gamemenu_levelselect.qb`, `gamemenu.qb`.
-- **OPEN — `mainmenu_scripts.qb`:** a short-if body begins with a `0x00` byte (read as EndOfFile),
-  so the body bails and the short-if can't find its EndIf. Cause unclear (padding? misread). 
+- **FIXED — array subscript on an expression** `(<a>.<b>)[<c>]` (Byte_Array 0x05 as a postfix):
+  `DecompileExpression` now consumes postfix `[idx]` subscripts after an atom (binds tighter than
+  infix), applied in value context or when the atom was parenthesised (`(expr)[idx]` is
+  unambiguously a subscript). Unlocked **decompilation** of `gamemenu_levelselect.qb`, `gamemenu.qb`.
+- **OPEN — `mainmenu_scripts.qb`:** a short-if body (after `if (<var> > 0)`) begins with a
+  standalone `0x00` in opcode position, then `<cks> 03(struct) … 04 21(Repeat) <var>` — a `Repeat`
+  (0x21, while-loop end) with no matching `Begin` (0x20). The `0x00` is NOT simple padding (skipping
+  it leaves the orphaned Repeat → misalignment). Likely a Begin/Repeat (while) loop form or data
+  construct the decompiler misreads. Needs deeper RE; DEFERRED (not required for the Skip-Tutorial
+  feature, which can use mainmenu_options + gameflow + Levels instead of the main-menu builder).
 - **Note:** decompiling ≠ recompilable. `cutscene.qb` decompiles but RECOMPILE fails (a compiler
   "Unrecognised token" gap); `Levels.qb`/`gamemenu_options.qb` recompile only via the §2b
   switch→if-chain lowering (semantically-equivalent, not byte-identical, needs in-game validation).

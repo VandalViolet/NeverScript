@@ -1101,6 +1101,31 @@ func Decompile(qb []byte) (string, error) {
         }
         index += bytesRead
 
+        // Postfix array subscript(s): atom[idx]. Binds tighter than infix operators.
+        // Apply in value context, OR when the atom was parenthesised — `(expr)[idx]`
+        // is unambiguously a subscript (a parenthesised value can't take an argument),
+        // even inside an argument-allowing context like the body of another `(...)`.
+        for !allowInvocationArguments || strings.HasPrefix(atomCode, "(") {
+            sb, e := GetByte(index)
+            if e != nil || sb != Byte_Array {
+                break
+            }
+            subIndex := index + 1
+            subscriptCode, subRead, e2 := DecompileExpression(subIndex, indentationLevel, false, shouldPadEquals)
+            if e2 != nil {
+                return "", 0, e2
+            }
+            subIndex += subRead
+            eb, e3 := GetByte(subIndex)
+            if e3 != nil || eb != Byte_EndArray {
+                // not a well-formed subscript; leave the `[` for normal handling
+                break
+            }
+            subIndex++
+            atomCode = fmt.Sprintf("%s[%s]", atomCode, subscriptCode)
+            index = subIndex
+        }
+
         nextByte, err := GetByte(index)
         if err != nil {
             return atomCode, index - initialIndex, nil
