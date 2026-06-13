@@ -363,8 +363,20 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 				for _, bodyNode := range switchData.CaseBodies[i] {
 					writeBytecodeForNode(bodyNode)
 				}
-				trailPositions[i] = len(compiler.Bytes)
-				write(0x49, 0x00, 0x00)
+				// The construct physically abutting `endswitch` carries no
+				// trailing short-break (its `break` would be a redundant
+				// fall-through). When there is no default, that construct is the
+				// final case, so the original Neversoft compiler elides its
+				// trailing 0x49. (When a default exists, every case still needs
+				// its break to skip over the default body, and the default —
+				// emitted below — is the one abutting endswitch.)
+				isFinalCaseAbuttingEndswitch := i == len(switchData.CaseValues)-1 && !switchData.HasDefault
+				if isFinalCaseAbuttingEndswitch {
+					trailPositions[i] = -1
+				} else {
+					trailPositions[i] = len(compiler.Bytes)
+					write(0x49, 0x00, 0x00)
+				}
 			}
 
 			defaultPosition := -1
@@ -380,11 +392,20 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			endswitchPosition := len(compiler.Bytes)
 			write(0x3D)
 
-			// Backpatch short-break offsets.
-			//   introOff = (trailPos + 2) - introPos   (targets the trail SB's last offset byte)
+			// Backpatch short-break offsets. Every intro short-break targets the
+			// byte just before the next construct (case/default/endswitch):
+			//   introOff = (trailPos + 2) - introPos   (targets the trail SB's last offset byte,
+			//                                            i.e. one before the next case/default)
 			//   trailOff = endswitchPos - trailPos
 			//   defOff   = (endswitchPos - 1) - defPos (targets the byte before endswitch)
+			// A final case with no default has no trailing SB (trailPos == -1); its
+			// intro instead targets endswitchPos-1, exactly like a default.
 			for i := range switchData.CaseValues {
+				if trailPositions[i] == -1 {
+					introOff := (endswitchPosition - 1) - introPositions[i]
+					writeLittleUint16Index(uint16(introOff), introPositions[i]+1)
+					continue
+				}
 				introOff := (trailPositions[i] + 2) - introPositions[i]
 				writeLittleUint16Index(uint16(introOff), introPositions[i]+1)
 				trailOff := endswitchPosition - trailPositions[i]
