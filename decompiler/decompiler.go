@@ -891,6 +891,17 @@ func Decompile(qb []byte) (string, error) {
             var argumentCodeArray []string
             if allowInvocationArguments {
                 for {
+                    // Respect the active body limit (set while decompiling a
+                    // random's last branch, which has no terminating longjump).
+                    // THUG2 separates that branch's final statement from the
+                    // following one purely by the random's structural end, with
+                    // no 0x01 newline — so without this guard the invocation
+                    // greedily swallows the post-random statement as an argument,
+                    // corrupting both branch sizes and longjump offsets on
+                    // recompile.
+                    if index >= bodyEndLimit {
+                        break
+                    }
                     argumentCode, bytesRead, err := DecompileArgument(index, indentationLevel, false)
                     if err != nil {
                         break
