@@ -22,6 +22,43 @@ level array assignment) that the compiler drops. Not yet byte-identical; harmles
 `AU_Scripts.qb` can't be measured for byte-identity yet because it fails to recompile
 (see §2).
 
+## 1a. Bulk round-trip campaign — switch / random / assignment fixes
+**Status: three root-cause bugs fixed; 177 → 226 byte-identical of ~257 `.qb`.**
+
+A round-trip sweep over every `.qb` in `qb_scripts`/`mainmenu_scripts`/`BO_scripts`/
+`AU_scripts`/`TR_scripts` (decompile → recompile → `cmp`) went from **177 OK / 52
+mismatch / 28 error** to **226 OK / 13 mismatch / 18 error**, with zero regressions.
+Three independent root causes were fixed:
+
+1. **Switch — spurious trailing short-break on the final case.** THUG2 omits the
+   trailing `0x49` on the case abutting `endswitch` (its break is a redundant fall-
+   through). The emitter wrote one after *every* case, so any switch whose last case
+   had no `default` came out +3 bytes (and shifted all forward jumps crossing it).
+   Now the final no-default case skips the trailing short-break and targets its intro
+   offset at `endswitchPos-1` (like a `default`). ~40 files fixed (`net/*`, `skater/*`,
+   `menu/*`). `BO_scripts.qb` and `chapter_info.qb` are now byte-identical.
+
+2. **`random` — last branch over-read.** A random's last branch has no terminating
+   longjump and is bounded by the random's structural end, with *no* `0x01` between it
+   and the following statement. The decompiler's invocation-argument loop swallowed
+   that following statement as an argument, corrupting branch sizes + longjump offsets.
+   Fixed by honouring the body limit inside the argument loop. (LongJump `0x2e` target
+   = `(ljPos+5) + value`; the emitter's `finalIndex - ljPos - 5` is correct once the
+   AST is right.)
+
+3. **Assignment target must be a name.** `ParseChecksum` accepts *any* token as a
+   checksum name (incl. `)`), so in `((arr[idx]) = X)` — where the global `arr[idx]`
+   parses as an invocation — the param loop read the inner `) = X` as a keyword-param
+   `)=X` and ran past the paren. Guarded `ParseAssignment` to require an Identifier /
+   RawChecksum / `<local>` name. NB a naive "checksum-then-`[` is a subscript not an
+   invocation" attempt regressed array-literal arguments (`AnimEquals [a b c]`) — the
+   `name [...]` bytecode is identical for subscript and call-with-array-arg, so the
+   invocation parse is fine; only the runaway assignment was the bug.
+
+Remaining mismatches/errors are other classes (a Begin/Repeat `0x00` vs While `0x20`
+loop-opcode choice in the goal_* files; a handful of decompile gaps; recompiler hangs
+in `cas_skater_*`). See the project notes for the running list.
+
 ## 2. Decompiler opcode / construct coverage
 **Status: open — the main real gap.**
 
