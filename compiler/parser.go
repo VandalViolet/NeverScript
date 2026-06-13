@@ -476,20 +476,44 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					index += secondExpressionParseResult.TokensConsumed
 					if GetKind(index) == TokenKind_RightSquareBracket {
 						index += 1
-						return ParseResult{
-							GotResult: true,
-							Node:           AstNode{
-								Kind: AstKind_ArrayAccess,
-								Data: AstData_ArrayAccess{
-									// Array is the indexed base (e.g. the `(<x>)` before
-									// `[i]`); Index is the subscript expression. (Previously
-									// both were set to the subscript, dropping the base and
-									// corrupting `(...)[...]` access bytecode.)
-									Array: expressionParseResult.Node,
-									Index: secondExpressionParseResult.Node,
-								},
+						arrayAccessNode := AstNode{
+							Kind: AstKind_ArrayAccess,
+							Data: AstData_ArrayAccess{
+								// Array is the indexed base (e.g. the `(<x>)` before
+								// `[i]`); Index is the subscript expression. (Previously
+								// both were set to the subscript, dropping the base and
+								// corrupting `(...)[...]` access bytecode.)
+								Array: expressionParseResult.Node,
+								Index: secondExpressionParseResult.Node,
 							},
-							TokensConsumed: expressionParseResult.TokensConsumed + 1 + secondExpressionParseResult.TokensConsumed + 1,
+						}
+						consumedSoFar := expressionParseResult.TokensConsumed + 1 + secondExpressionParseResult.TokensConsumed + 1
+						// Postfix member access on a subscript: `base[idx].member`
+						// (e.g. `CHAPTER_INFO [<i>].level`). The subscript binds first,
+						// then the `.member` selects into the indexed element. Without
+						// this the `.member` is orphaned and the surrounding `(...)`
+						// fails to parse.
+						if GetKind(index) == TokenKind_Dot {
+							index++
+							memberParseResult := ParseExpression(index, true)
+							if memberParseResult.GotResult {
+								return ParseResult{
+									GotResult: true,
+									Node: AstNode{
+										Kind: AstKind_DotExpression,
+										Data: AstData_BinaryExpression{
+											LeftNode:  arrayAccessNode,
+											RightNode: memberParseResult.Node,
+										},
+									},
+									TokensConsumed: consumedSoFar + 1 + memberParseResult.TokensConsumed,
+								}
+							}
+						}
+						return ParseResult{
+							GotResult:      true,
+							Node:           arrayAccessNode,
+							TokensConsumed: consumedSoFar,
 						}
 					}
 				}
@@ -1051,6 +1075,20 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 
 	ParseAssignment = func(index int, allowInvocations bool) ParseResult {
 		start := index
+		// ParseChecksum will blindly accept ANY token as a checksum name
+		// (including punctuation like ')'); guard against that so an invocation
+		// parameter loop doesn't mistake a closing ')' followed by '= <x>' for a
+		// keyword-param assignment `)=<x>` and swallow tokens past the paren. A
+		// real assignment target starts with a name: identifier, raw checksum,
+		// or a `<local>` reference.
+		if GetKind(index) != TokenKind_Identifier &&
+			GetKind(index) != TokenKind_RawChecksum &&
+			GetKind(index) != TokenKind_LeftAngleBracket {
+			return ParseResult{
+				GotResult: false,
+				Reason:    "First token in assignment wasn't a name",
+			}
+		}
 		nameParseResult := ParseChecksum(index)
 		if !nameParseResult.GotResult {
 			return ParseResult{
