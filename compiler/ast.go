@@ -287,5 +287,11 @@ func (astData AstData_Random) astData() {}
 // them, which e.g. blanks the on-screen combo score (printf formats it).
 type AstData_NameTableEntry struct {
 	Names []string
+	// Hashes is parallel to Names. A value >= 0 is an explicit checksum override
+	// for a name whose stored table hash is NON-canonical — i.e. differs from
+	// StringToChecksum(name), a quirk of the original THUG2 build. -1 means "no
+	// override; compute the canonical checksum". The decompiler emits an override
+	// as a trailing `#rawhash` token after the name in __register_checksums__.
+	Hashes []int64
 }
 func (astData AstData_NameTableEntry) astData() {}

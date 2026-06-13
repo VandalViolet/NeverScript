@@ -9,6 +9,8 @@ import (
     "regexp"
     "strconv"
     "strings"
+
+    "github.com/byxor/NeverScript/compiler"
 )
 
 var nsTrace = os.Getenv("NS_TRACE") != ""
@@ -88,6 +90,12 @@ func Decompile(qb []byte) (string, error) {
     // byte-faithful for round-trips and value-mods.
     var tableOrder []string
 
+    // The exact stored hash for each table name. Usually equal to
+    // StringToChecksum(name), but the original THUG2 build occasionally stores a
+    // NON-canonical hash (e.g. Obj_Visible as 0x00d125d7 instead of the canonical
+    // 0x20d125d7). We preserve these so round-trips stay byte-identical.
+    var tableHashByName map[string]uint32
+
     // Upper bound (exclusive) for DecompileBodyOfCode. Defaults to the whole file;
     // temporarily tightened when decompiling a random's LAST branch (which has no
     // terminating longjump) so it stops at the random's true end instead of running
@@ -131,6 +139,7 @@ func Decompile(qb []byte) (string, error) {
         // forward-parse the table, which is unambiguous (the hash is read as 4 raw
         // bytes and can never be mistaken for an opcode).
         checksumTable = make(map[uint32]string)
+        tableHashByName = make(map[string]uint32)
         _, tableStart, err := DecompileBodyOfCode(0, 0, true)
         if err != nil {
             return nil, err
@@ -187,6 +196,7 @@ func Decompile(qb []byte) (string, error) {
             if isPrintable {
                 table[checksum] = checksumName
                 tableOrder = append(tableOrder, checksumName)
+                tableHashByName[checksumName] = checksum
             }
         }
         return table, nil
@@ -326,7 +336,7 @@ func Decompile(qb []byte) (string, error) {
 
         var checksumCode string
         checksum := binary.LittleEndian.Uint32(checksumBytes)
-        if checksumName, found := checksumTable[checksum]; found {
+        if checksumName, found := checksumTable[checksum]; found && compiler.StringToChecksum(checksumName) == checksum {
             if !isPlainIdentifier(checksumName) || isReservedWord(checksumName) {
                 // Backtick-escape names that aren't plain identifiers (spaces, path
                 // separators, dots — e.g. `models\mainmenu_bg\mainmenu_bg.tex`) or
@@ -1454,6 +1464,16 @@ func Decompile(qb []byte) (string, error) {
     // (a reordered table blanks the on-screen combo score). The compiler emits the
     // trailing table from this list verbatim instead of from a Go-map (random order).
     var tableNames []string
+    // overrideSuffix returns a trailing ` #rawhash` token when the name's stored
+    // table hash is non-canonical (differs from StringToChecksum(name)), so the
+    // compiler reproduces the exact original hash instead of recomputing it.
+    overrideSuffix := func(name string) string {
+        h, ok := tableHashByName[name]
+        if !ok || compiler.StringToChecksum(name) == h {
+            return ""
+        }
+        return fmt.Sprintf(" #%02x%02x%02x%02x", h&0xff, (h>>8)&0xff, (h>>16)&0xff, (h>>24)&0xff)
+    }
     for _, name := range tableOrder {
         // The directive parser reads identifier/keyword tokens; names with spaces
         // Names that aren't plain identifiers (e.g. a texture path like
@@ -1461,19 +1481,20 @@ func Decompile(qb []byte) (string, error) {
         // emitted as bare directive tokens. Emit them as a quoted string literal;
         // the directive parser accepts String tokens and re-hashes them, so they
         // round-trip into the name table byte-faithfully.
+        suffix := overrideSuffix(name)
         if !isPlainIdentifier(name) {
             escaped := strings.ReplaceAll(name, "\\", "\\\\")
             escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-            tableNames = append(tableNames, "\""+escaped+"\"")
+            tableNames = append(tableNames, "\""+escaped+"\""+suffix)
             continue
         }
         // Backtick-escape names colliding with a NeverScript keyword (e.g. a
         // checksum literally named `default`) so the directive parser reads them
         // as identifiers rather than mis-lexing them as switch/case/etc keywords.
         if isReservedWord(name) {
-            tableNames = append(tableNames, "`"+name+"`")
+            tableNames = append(tableNames, "`"+name+"`"+suffix)
         } else {
-            tableNames = append(tableNames, name)
+            tableNames = append(tableNames, name+suffix)
         }
     }
     if len(tableNames) > 0 {

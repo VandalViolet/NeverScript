@@ -479,9 +479,15 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 		case AstKind_NameTableEntry:
 			// Checksum names declared via __register_checksums__: register them so
 			// they appear in the trailing name table, IN THIS ORDER, and emit NO
-			// body bytecode.
-			for _, name := range node.Data.(AstData_NameTableEntry).Names {
-				nameTable[name] = StringToChecksum(name)
+			// body bytecode. A name may carry an explicit non-canonical checksum
+			// override (Hashes[i] >= 0) to reproduce a quirky original table hash.
+			entryData := node.Data.(AstData_NameTableEntry)
+			for i, name := range entryData.Names {
+				checksum := StringToChecksum(name)
+				if i < len(entryData.Hashes) && entryData.Hashes[i] >= 0 {
+					checksum = uint32(entryData.Hashes[i])
+				}
+				nameTable[name] = checksum
 				if !nameTableOrderSeen[name] {
 					nameTableOrderSeen[name] = true
 					nameTableOrder = append(nameTableOrder, name)

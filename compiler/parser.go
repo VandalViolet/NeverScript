@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -67,10 +68,28 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		start := index
 		index++
 		var names []string
+		var hashes []int64
+		// A name may be immediately followed by a `#rawhash` token: an explicit
+		// checksum override for a name whose stored table hash is non-canonical
+		// (differs from StringToChecksum(name)). Record it so the trailing name
+		// table reproduces the exact original bytes; otherwise -1 = compute.
+		appendName := func(n string) {
+			names = append(names, n)
+			if GetKind(index) == TokenKind_RawChecksum {
+				hex := GetToken(index).Data[1:] // strip '#'; bytes are little-endian
+				le := hex[6:8] + hex[4:6] + hex[2:4] + hex[0:2]
+				v, _ := strconv.ParseUint(le, 16, 32)
+				hashes = append(hashes, int64(v))
+				index++
+			} else {
+				hashes = append(hashes, -1)
+			}
+		}
 		for {
 			if GetKind(index) == TokenKind_Identifier {
-				names = append(names, GetToken(index).Data)
+				name := GetToken(index).Data
 				index++
+				appendName(name)
 			} else if GetKind(index) == TokenKind_String {
 				// Non-identifier names (texture paths, names with spaces) are emitted
 				// as quoted strings; strip the quotes and unescape \\ and \".
@@ -78,15 +97,15 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				raw = raw[1 : len(raw)-1]
 				raw = strings.ReplaceAll(raw, "\\\"", "\"")
 				raw = strings.ReplaceAll(raw, "\\\\", "\\")
-				names = append(names, raw)
 				index++
+				appendName(raw)
 			} else {
 				break
 			}
 		}
 		return ParseResult{
 			GotResult:      true,
-			Node:           AstNode{Kind: AstKind_NameTableEntry, Data: AstData_NameTableEntry{Names: names}},
+			Node:           AstNode{Kind: AstKind_NameTableEntry, Data: AstData_NameTableEntry{Names: names, Hashes: hashes}},
 			TokensConsumed: index - start,
 		}
 	}
