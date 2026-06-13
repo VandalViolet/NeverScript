@@ -849,8 +849,17 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					break
 				}
 			}
-			if expressionParseResult := ParseExpression(index+extraTokens+1, allowInvocations); expressionParseResult.GotResult {
-				checksumOrInvocation = ParseInvocation(index)
+			// A binary minus after the checksum (e.g. `(Foo - 1)`) is a
+			// subtraction operator, never the start of an invocation argument.
+			// It only reaches here as TokenKind_Minus in the spaced form; the
+			// adjacency form `Foo -1` lexes as a single negative Integer, so real
+			// signed-literal arguments are unaffected. Without this guard,
+			// parseExpressionInner folds `- 1` into the literal `-1` and wrongly
+			// makes Foo an invocation, dropping the 0x0A subtraction byte.
+			if GetKind(index+extraTokens+1) != TokenKind_Minus {
+				if expressionParseResult := ParseExpression(index+extraTokens+1, allowInvocations); expressionParseResult.GotResult {
+					checksumOrInvocation = ParseInvocation(index)
+				}
 			}
 		}
 
