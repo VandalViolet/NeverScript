@@ -271,6 +271,7 @@ type AstData_Random struct {
 	BranchWeights []AstNode
 	Branches [][]AstNode
 	IsNoRepeat bool // true => emit 0x40 (random2/no-repeat) instead of 0x2F
+	IsRandom3  bool // true => emit 0x41 (random3, a fourth random variant); wins over IsNoRepeat
 	// Branch0Newline: does the original have a 0x01 between the offset table and
 	// the first branch? It's per-random (formatting-driven, not type-driven), so we
 	// preserve it via a newline right after `{` instead of force-emitting it. Needed

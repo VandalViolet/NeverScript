@@ -35,6 +35,7 @@ const (
 	TokenKind_Bang
 	TokenKind_Random
 	TokenKind_Random2
+	TokenKind_Random3
 	TokenKind_RandomRange
 	TokenKind_If
 	TokenKind_Else
@@ -85,6 +86,7 @@ func (tokenKind TokenKind) String() string {
 		"TokenKind_Bang",
 		"TokenKind_Random",
 		"TokenKind_Random2",
+		"TokenKind_Random3",
 		"TokenKind_RandomRange",
 		"TokenKind_If",
 		"TokenKind_Else",

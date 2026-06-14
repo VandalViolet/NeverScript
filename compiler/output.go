@@ -238,7 +238,9 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 
 			numBranches := len(data.Branches)
 
-			if data.IsNoRepeat {
+			if data.IsRandom3 {
+				write(0x41)
+			} else if data.IsNoRepeat {
 				write(0x40)
 			} else {
 				write(0x2F)

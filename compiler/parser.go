@@ -1787,13 +1787,14 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 	ParseRandom = func(index int) ParseResult {
 		oldIndex := index
 
-		if GetKind(index) != TokenKind_Random && GetKind(index) != TokenKind_Random2 {
+		if GetKind(index) != TokenKind_Random && GetKind(index) != TokenKind_Random2 && GetKind(index) != TokenKind_Random3 {
 			return ParseResult{
 				GotResult: false,
 				Reason:    "First token in 'random' wasn't 'random'",
 			}
 		}
 		isNoRepeat := GetKind(index) == TokenKind_Random2
+		isRandom3 := GetKind(index) == TokenKind_Random3
 		index++
 
 		// Optional non-canonical branch-longjump delta: an integer between the
@@ -1871,6 +1872,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					BranchWeights:  branchWeights[:numBranches],
 					Branches:       branches[:numBranches],
 					IsNoRepeat:     isNoRepeat,
+					IsRandom3:      isRandom3,
 					Branch0Newline: branch0Newline,
 					LongJumpDelta:  longJumpDelta,
 				},

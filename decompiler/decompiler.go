@@ -69,6 +69,7 @@ const (
     Byte_Case              = 0x3E
     Byte_Default           = 0x3F
     Byte_RandomNoRepeat    = 0x40
+    Byte_Random4           = 0x41
     Byte_Colon             = 0x42
     Byte_ShortIf           = 0x47
     Byte_ShortElse         = 0x48
@@ -1103,11 +1104,13 @@ func Decompile(qb []byte) (string, error) {
         } else if b == Byte_AllArguments {
             index++
             return "<...>", index - initialIndex, nil
-        } else if b == Byte_Random || b == Byte_RandomNoRepeat {
+        } else if b == Byte_Random || b == Byte_RandomNoRepeat || b == Byte_Random4 {
             initialIndex := index
             randomKeyword := "random"
             if b == Byte_RandomNoRepeat {
                 randomKeyword = "random2" // 0x40 variant (distinct opcode; preserve it)
+            } else if b == Byte_Random4 {
+                randomKeyword = "random3" // 0x41 variant (QB_RANDOM4; distinct opcode)
             }
             index++
 
