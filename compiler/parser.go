@@ -1193,6 +1193,14 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 	}
 
 	pruneStructIfInvoked := func(parseResult *ParseResult, index *int) {
+		// If the if-body `{...}` is still present at the cursor, the invocation did
+		// NOT swallow it as a struct param (e.g. the body contains a `return`/`break`,
+		// which makes ParseStruct bail), so the invocation's last struct param is a
+		// real ARGUMENT — `if Foo {arg=<x>} { ... return }` — not the body. Pruning it
+		// here would steal the real argument and mis-read it as the body. Leave it.
+		if GetKind(*index) == TokenKind_LeftCurlyBrace {
+			return
+		}
 		// TODO(brandon): semantically compress this code, it does basically the same thing twice but for 2 cases
 		if parseResult.Node.Kind == AstKind_Invocation {
 			invocationData := parseResult.Node.Data.(AstData_Invocation)
@@ -1625,7 +1633,15 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			numBodies++
 		}
 
-		conditionParseResult := ParseExpression(index, true)
+		// A parenless comparison condition `if name = value {` is stored as a bare
+		// assignment node (0x16<name> 0x07 <value>, no surrounding parens), which
+		// ParseExpression won't produce (it stops after the name). Try ParseAssignment
+		// first; it only matches `name = ...` and otherwise leaves invocations,
+		// parenthesised conditions, `! cond`, and bare checksums to ParseExpression.
+		conditionParseResult := ParseAssignment(index, true)
+		if !conditionParseResult.GotResult || conditionParseResult.Error != nil {
+			conditionParseResult = ParseExpression(index, true)
+		}
 		if !conditionParseResult.GotResult {
 			return ParseResult{
 				GotResult: false,
@@ -1936,6 +1952,16 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		for { // gather parameters
 			if GetKind(index) == TokenKind_BackwardSlash && GetKind(index+1) == TokenKind_NewLine {
 				index += 2
+			}
+			// Invocation arguments may be comma-separated (e.g.
+			// `Vibrate Actuator=0, Percent=1, duration=1,`, including a trailing
+			// comma). THUG2 stores each comma as a 0x09 byte between the args;
+			// keep them as parameter nodes so the recompile is byte-identical.
+			if commaParseResult := ParseComma(index); commaParseResult.GotResult {
+				parameterNodes.MaybeSave(commaParseResult)
+				tokensConsumedByEachParameterNode = append(tokensConsumedByEachParameterNode, commaParseResult.TokensConsumed)
+				index += commaParseResult.TokensConsumed
+				continue
 			}
 			parameterParseResult := ParseInvocationParameter(index)
 			if parameterParseResult.GotResult {
