@@ -989,7 +989,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			} else if commaParseResult := ParseComma(index); commaParseResult.GotResult {
 				elementNodes.MaybeSave(commaParseResult)
 				index += commaParseResult.TokensConsumed
-			} else if expressionParseResult := ParseExpression(index, true); expressionParseResult.GotResult {
+			} else if expressionParseResult := ParseExpression(index, true); expressionParseResult.GotResult && expressionParseResult.TokensConsumed > 0 {
+				// Require forward progress: a GotResult with 0 tokens consumed (e.g. a
+				// nested-struct element that hit an "Incomplete struct" and returned
+				// without a token count) would otherwise spin this loop forever.
 				elementNodes.MaybeSave(expressionParseResult)
 				index += expressionParseResult.TokensConsumed
 			} else {
@@ -1084,6 +1087,18 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				elementNodes.MaybeSave(parseResult)
 				index += parseResult.TokensConsumed
 			} else if parseResult := ParseComment(index); parseResult.GotResult {
+				elementNodes.MaybeSave(parseResult)
+				index += parseResult.TokensConsumed
+			} else if GetKind(index) == TokenKind_Script {
+				// A struct member can be a nested script definition, e.g. the
+				// `script disqualify_script { ... }` inside each cas_skater part
+				// struct. ParseAssignment/ParseExpression don't handle the `script`
+				// keyword, so without this the loop made no progress — and inside an
+				// array element that 0-token result spun ParseArray forever.
+				parseResult := ParseScript(index)
+				if !parseResult.GotResult || parseResult.Error != nil {
+					return parseResult
+				}
 				elementNodes.MaybeSave(parseResult)
 				index += parseResult.TokensConsumed
 			} else if parseResult := ParseAssignment(index, true); parseResult.GotResult {
