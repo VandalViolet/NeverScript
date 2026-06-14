@@ -1158,6 +1158,15 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		}
 		index += nameParseResult.TokensConsumed
 
+		// Newlines may sit between the name and '=' (`name\n= value`, stored as 0x01
+		// before the 0x07). Count them so output can re-emit them; if no '=' follows,
+		// this isn't an assignment and we fall through to the not-equals return.
+		newlinesBeforeEquals := 0
+		for GetKind(index) == TokenKind_NewLine {
+			newlinesBeforeEquals++
+			index++
+		}
+
 		if GetKind(index) != TokenKind_Equals {
 			return ParseResult{
 				GotResult: false,
@@ -1198,9 +1207,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			Node: AstNode{
 				Kind: AstKind_Assignment,
 				Data: AstData_Assignment{
-					NameNode:            nameParseResult.Node,
-					ValueNode:           valueParseResult.Node,
-					NewlinesAfterEquals: newlinesAfterEquals,
+					NameNode:             nameParseResult.Node,
+					ValueNode:            valueParseResult.Node,
+					NewlinesAfterEquals:  newlinesAfterEquals,
+					NewlinesBeforeEquals: newlinesBeforeEquals,
 				},
 			},
 			TokensConsumed: index - start,

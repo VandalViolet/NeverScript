@@ -500,6 +500,11 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 		case AstKind_Assignment:
 			data := node.Data.(AstData_Assignment)
 			writeBytecodeForNode(data.NameNode)
+			// Re-emit newlines that sat between the name and '=' (`name\n= value`),
+			// stored as 0x01 bytes before the 0x07.
+			for i := 0; i < data.NewlinesBeforeEquals; i++ {
+				write(1)
+			}
 			write(7)
 			// Re-emit newlines that sat between '=' and the value (e.g. a struct on
 			// the next line), which THUG2 stores as 0x01 bytes after the 0x07.

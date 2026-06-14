@@ -1291,6 +1291,27 @@ func Decompile(qb []byte) (string, error) {
             index = subIndex
         }
 
+        // Newlines between the name and `=` (`name\n= value`), stored as 0x01 bytes
+        // before the 0x07. Consume them so the `=` handler below sees the `=`, and
+        // re-emit them between the name and `=` for byte-identity.
+        preEqualsNewlines := ""
+        if nb, _ := GetByte(index); nb == Byte_NewLine {
+            j := index
+            for {
+                if b2, _ := GetByte(j); b2 == Byte_NewLine {
+                    j++
+                } else {
+                    break
+                }
+            }
+            if eb, _ := GetByte(j); eb == Byte_Equals || eb == Byte_EqualTo {
+                for k := index; k < j; k++ {
+                    preEqualsNewlines += "\n"
+                }
+                index = j
+            }
+        }
+
         nextByte, err := GetByte(index)
         if err != nil {
             return atomCode, index - initialIndex, nil
@@ -1390,12 +1411,12 @@ func Decompile(qb []byte) (string, error) {
 
             var format string
             if shouldPadEquals {
-                format = "%s = %s%s"
+                format = "%s%s = %s%s"
             } else {
-                format = "%s=%s%s"
+                format = "%s%s=%s%s"
             }
 
-            return fmt.Sprintf(format, atomCode, newlinesAfterEqualsCode, nextExpression), index - initialIndex, nil
+            return fmt.Sprintf(format, atomCode, preEqualsNewlines, newlinesAfterEqualsCode, nextExpression), index - initialIndex, nil
         } else if nextByte == Byte_Dot {
             index++
 

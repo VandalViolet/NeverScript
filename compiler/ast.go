@@ -123,6 +123,10 @@ type AstData_Assignment struct {
 	// struct/array placed on the next line: `name =\n{ ... }`). THUG2 encodes
 	// these as 0x01 bytes after the 0x07, so we preserve the count for byte-identity.
 	NewlinesAfterEquals int
+	// NewlinesBeforeEquals counts newline tokens between the name and '=' (e.g.
+	// `name\n= value` in heavily formatted data like cas_skater), stored as 0x01
+	// bytes BEFORE the 0x07. Preserved for byte-identity.
+	NewlinesBeforeEquals int
 }
 func (astData AstData_Assignment) astData() {}
 
