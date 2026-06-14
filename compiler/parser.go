@@ -25,7 +25,7 @@ type Parser struct {
 }
 
 func BuildAbstractSyntaxTree(parser *Parser) {
-	var ParseRoot func( /*index is always 0*/) ParseResult
+	var ParseRoot func( /*index is always 0*/ ) ParseResult
 	var ParseRootBodyNode func(index int) ParseResult
 	var ParseExpression func(index int, allowInvocations bool) ParseResult
 	var ParseExpressionBeginningWithLeftParenthesis func(index int) ParseResult
@@ -123,8 +123,8 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			bodyNodeParseResult = ParseRootBodyNode(index)
 
 			if bodyNodeParseResult.GotResult {
-			    if bodyNodeParseResult.Error != nil {
-			    	return bodyNodeParseResult
+				if bodyNodeParseResult.Error != nil {
+					return bodyNodeParseResult
 				}
 				bodyNodes.MaybeSave(bodyNodeParseResult)
 				index += bodyNodeParseResult.TokensConsumed
@@ -163,8 +163,8 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 	ParseRootBodyNode = func(index int) ParseResult {
 		if GetKind(index) == TokenKind_RightParenthesis {
 			return ParseResult{
-				GotResult: true,
-				Error: errors.New("Unnecessary parenthesis )"),
+				GotResult:  true,
+				Error:      errors.New("Unnecessary parenthesis )"),
 				LineNumber: GetToken(index).LineNumber,
 			}
 		}
@@ -462,9 +462,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					return inPlaceMathOperationParseResult(index, expressionParseResult, secondExpressionParseResult, AstKind_AdditionExpression)
 				} else {
 					return ParseResult{
-						GotResult:      true,
-						Error:          errors.New("Incomplete +="),
-						LineNumber:     secondExpressionParseResult.LineNumber,
+						GotResult:  true,
+						Error:      errors.New("Incomplete +="),
+						LineNumber: secondExpressionParseResult.LineNumber,
 					}
 				}
 			} else if GetKind(index) == TokenKind_Minus && GetKind(index+1) == TokenKind_Equals {
@@ -475,9 +475,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					return inPlaceMathOperationParseResult(index, expressionParseResult, secondExpressionParseResult, AstKind_SubtractionExpression)
 				} else {
 					return ParseResult{
-						GotResult:      true,
-						Error:          errors.New("Incomplete -="),
-						LineNumber:     secondExpressionParseResult.LineNumber,
+						GotResult:  true,
+						Error:      errors.New("Incomplete -="),
+						LineNumber: secondExpressionParseResult.LineNumber,
 					}
 				}
 			} else if GetKind(index) == TokenKind_Asterisk && GetKind(index+1) == TokenKind_Equals {
@@ -488,9 +488,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					return inPlaceMathOperationParseResult(index, expressionParseResult, secondExpressionParseResult, AstKind_MultiplicationExpression)
 				} else {
 					return ParseResult{
-						GotResult:      true,
-						Error:          errors.New("Incomplete *="),
-						LineNumber:     secondExpressionParseResult.LineNumber,
+						GotResult:  true,
+						Error:      errors.New("Incomplete *="),
+						LineNumber: secondExpressionParseResult.LineNumber,
 					}
 				}
 			} else if GetKind(index) == TokenKind_ForwardSlash && GetKind(index+1) == TokenKind_Equals {
@@ -501,9 +501,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					return inPlaceMathOperationParseResult(index, expressionParseResult, secondExpressionParseResult, AstKind_DivisionExpression)
 				} else {
 					return ParseResult{
-						GotResult:      true,
-						Error:          errors.New("Incomplete /="),
-						LineNumber:     secondExpressionParseResult.LineNumber,
+						GotResult:  true,
+						Error:      errors.New("Incomplete /="),
+						LineNumber: secondExpressionParseResult.LineNumber,
 					}
 				}
 			} else if GetKind(index) == TokenKind_LeftSquareBracket {
@@ -581,7 +581,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 
 			if GetKind(index) == TokenKind_Comma {
 				index++
-				if GetKind(index) == TokenKind_Float || GetKind(index) == TokenKind_Minus && GetKind(index + 1) == TokenKind_Float {
+				if GetKind(index) == TokenKind_Float || GetKind(index) == TokenKind_Minus && GetKind(index+1) == TokenKind_Float {
 					secondParseResult := ParseExpression(index, true)
 					if secondParseResult.GotResult {
 						index += secondParseResult.TokensConsumed
@@ -600,7 +600,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 						}
 						if GetKind(index) == TokenKind_Comma {
 							index++
-							if GetKind(index) == TokenKind_Float || GetKind(index) == TokenKind_Minus && GetKind(index + 1) == TokenKind_Float {
+							if GetKind(index) == TokenKind_Float || GetKind(index) == TokenKind_Minus && GetKind(index+1) == TokenKind_Float {
 								thirdParseResult := ParseExpression(index, true)
 								if thirdParseResult.GotResult {
 									index += thirdParseResult.TokensConsumed
@@ -619,28 +619,28 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 										}
 									}
 									return ParseResult{
-										GotResult: true,
-										Error: errors.New("Incomplete vector expression"),
+										GotResult:  true,
+										Error:      errors.New("Incomplete vector expression"),
 										LineNumber: GetToken(oldIndex).LineNumber,
 									}
 								}
 							}
 							return ParseResult{
-								GotResult: true,
-								Error: errors.New("Incomplete vector expression"),
+								GotResult:  true,
+								Error:      errors.New("Incomplete vector expression"),
 								LineNumber: GetToken(oldIndex).LineNumber,
 							}
 						}
 						return ParseResult{
-							GotResult: true,
-							Error: errors.New("Incomplete pair expression"),
+							GotResult:  true,
+							Error:      errors.New("Incomplete pair expression"),
 							LineNumber: GetToken(oldIndex).LineNumber,
 						}
 					}
 				}
 				return ParseResult{
-					GotResult: true,
-					Error: errors.New("Incomplete pair expression"),
+					GotResult:  true,
+					Error:      errors.New("Incomplete pair expression"),
 					LineNumber: GetToken(oldIndex).LineNumber,
 				}
 			}
@@ -679,13 +679,15 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			// operator lists, splitting any or/and that ParseExpression already grabbed
 			// (it treats or/and as right-associative postfix) so a whole parenthesised
 			// chain like (A = 0 or B = <c>) becomes one flat infix sequence.
-			var flattenLogicalSpine func(n AstNode, operands *[]AstNode, operators *[]AstKind)
-			flattenLogicalSpine = func(n AstNode, operands *[]AstNode, operators *[]AstKind) {
+			var flattenLogicalSpine func(n AstNode, operands *[]AstNode, operators *[]AstKind, nlBefore, nlAfter *[]int)
+			flattenLogicalSpine = func(n AstNode, operands *[]AstNode, operators *[]AstKind, nlBefore, nlAfter *[]int) {
 				if n.Kind == AstKind_LogicalOr || n.Kind == AstKind_LogicalAnd {
 					data := n.Data.(AstData_BinaryExpression)
-					flattenLogicalSpine(data.LeftNode, operands, operators)
+					flattenLogicalSpine(data.LeftNode, operands, operators, nlBefore, nlAfter)
 					*operators = append(*operators, n.Kind)
-					flattenLogicalSpine(data.RightNode, operands, operators)
+					*nlBefore = append(*nlBefore, 0) // spine operators carry no source newline
+					*nlAfter = append(*nlAfter, 0)
+					flattenLogicalSpine(data.RightNode, operands, operators, nlBefore, nlAfter)
 					return
 				}
 				*operands = append(*operands, n)
@@ -699,7 +701,9 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				// THUG2's single-0xE/0xF-pair encoding for chained conditions.
 				var operands []AstNode
 				var operators []AstKind
-				flattenLogicalSpine(firstParseResult.Node, &operands, &operators)
+				var newlinesBeforeOperator []int
+				var newlinesAfterOperator []int
+				flattenLogicalSpine(firstParseResult.Node, &operands, &operators, &newlinesBeforeOperator, &newlinesAfterOperator)
 				consumed := 1 + firstParseResult.TokensConsumed
 
 				parseOperand := func() bool {
@@ -709,32 +713,78 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					}
 					index += operandResult.TokensConsumed
 					consumed += operandResult.TokensConsumed
-					flattenLogicalSpine(operandResult.Node, &operands, &operators)
+					flattenLogicalSpine(operandResult.Node, &operands, &operators, &newlinesBeforeOperator, &newlinesAfterOperator)
 					return true
 				}
 
+				// skipNewlines consumes + counts newlines that sit between an operator
+				// byte and the following operand (`(A +\n B)`, 0x01 after the operator).
+				skipNewlines := func() int {
+					n := 0
+					for GetKind(index) == TokenKind_NewLine {
+						n++
+						index++
+						consumed++
+					}
+					return n
+				}
+
 				operators = append(operators, astKind)
+				newlinesBeforeOperator = append(newlinesBeforeOperator, 0) // first operator already recognised by caller
 				index += size
 				consumed += size
+				newlinesAfterOperator = append(newlinesAfterOperator, skipNewlines())
 				if !parseOperand() {
 					return ParseResult{GotResult: false, Reason: "Couldn't parse binary operator expression"}
 				}
 
+				trailingNewlines := 0
 				for GetKind(index) != TokenKind_RightParenthesis {
+					// Newlines inside a parenthesised flat expression sit before an
+					// operator (`(A * B\n + C)`, stored as 0x01 before the operator
+					// byte). Consume + count them; they must NOT abort the operator
+					// scan as an unrecognised token.
+					nlCount := 0
+					for GetKind(index) == TokenKind_NewLine {
+						nlCount++
+						index++
+						consumed++
+					}
+					if GetKind(index) == TokenKind_RightParenthesis {
+						trailingNewlines = nlCount // newlines between last operand and ')'
+						break
+					}
 					operatorKind, operatorSize, ok := detectOperator(index)
 					if !ok {
 						return ParseResult{GotResult: false, Reason: "Couldn't parse binary operator expression"}
 					}
 					operators = append(operators, operatorKind)
+					newlinesBeforeOperator = append(newlinesBeforeOperator, nlCount)
 					index += operatorSize
 					consumed += operatorSize
+					newlinesAfterOperator = append(newlinesAfterOperator, skipNewlines())
 					if !parseOperand() {
 						return ParseResult{GotResult: false, Reason: "Couldn't parse binary operator expression"}
 					}
 				}
 				consumed += 1
 
-				if len(operators) == 1 {
+				hasNewlines := trailingNewlines > 0
+				for _, n := range newlinesBeforeOperator {
+					if n > 0 {
+						hasNewlines = true
+					}
+				}
+				for _, n := range newlinesAfterOperator {
+					if n > 0 {
+						hasNewlines = true
+					}
+				}
+
+				// A single operator yields the original binary node (byte-identical),
+				// UNLESS a newline precedes it — that must round-trip via the flat node,
+				// which records newline positions.
+				if len(operators) == 1 && !hasNewlines {
 					return ParseResult{
 						GotResult: true,
 						Node: AstNode{
@@ -758,8 +808,11 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					Node: AstNode{
 						Kind: AstKind_FlatExpression,
 						Data: AstData_FlatExpression{
-							Operands:  operands,
-							Operators: operators,
+							Operands:               operands,
+							Operators:              operators,
+							NewlinesBeforeOperator: newlinesBeforeOperator,
+							NewlinesAfterOperator:  newlinesAfterOperator,
+							TrailingNewlines:       trailingNewlines,
 						},
 					},
 					TokensConsumed: consumed,
@@ -847,10 +900,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		}
 
 		return ParseResult{
-			GotResult: true,
-			Error: errors.New("Incomplete parenthesis ("),
+			GotResult:  true,
+			Error:      errors.New("Incomplete parenthesis ("),
 			LineNumber: GetToken(oldIndex).LineNumber,
-			Reason:    TokensNotRecognisedError(parser.Tokens[oldIndex:], "an expression beginning with a left parenthesis"),
+			Reason:     TokensNotRecognisedError(parser.Tokens[oldIndex:], "an expression beginning with a left parenthesis"),
 		}
 	}
 
@@ -1112,10 +1165,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				index += parseResult.TokensConsumed
 			} else if index == indexAfterLastIteration {
 				return ParseResult{
-					GotResult: true,
-					Error: errors.New("Incomplete struct"),
+					GotResult:  true,
+					Error:      errors.New("Incomplete struct"),
 					LineNumber: GetToken(startIndex).LineNumber,
-					Reason:    TokensNotRecognisedError(parser.Tokens[index:], "a struct element"),
+					Reason:     TokensNotRecognisedError(parser.Tokens[index:], "a struct element"),
 				}
 			}
 			indexAfterLastIteration = index
@@ -1192,10 +1245,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		valueParseResult := ParseExpression(index, allowInvocations)
 		if !valueParseResult.GotResult {
 			return ParseResult{
-				GotResult: true,
-				Error: errors.New("Incomplete assignment"),
+				GotResult:  true,
+				Error:      errors.New("Incomplete assignment"),
 				LineNumber: GetToken(index - 1).LineNumber,
-				Reason:    WrapStr("Couldn't parse expression for value of assignment", valueParseResult.Reason),
+				Reason:     WrapStr("Couldn't parse expression for value of assignment", valueParseResult.Reason),
 			}
 		} else if valueParseResult.Error != nil {
 			return valueParseResult
@@ -1365,10 +1418,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 
 		if GetKind(index) != TokenKind_Identifier && GetKind(index) != TokenKind_RawChecksum {
 			return ParseResult{
-				GotResult: true,
-				Error: errors.New("Incomplete script definition"),
-				LineNumber: GetToken(index-1).LineNumber,
-				Reason:    "Second token in script wasn't an identifier or a checksum",
+				GotResult:  true,
+				Error:      errors.New("Incomplete script definition"),
+				LineNumber: GetToken(index - 1).LineNumber,
+				Reason:     "Second token in script wasn't an identifier or a checksum",
 			}
 		}
 		nameToken := GetToken(index)
@@ -1389,10 +1442,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		bodyParseResult, bodyNodes := ParseBodyOfCode(index)
 		if !bodyParseResult.GotResult {
 			return ParseResult{
-				GotResult: true,
-				Error: errors.New("Incomplete script definition"),
+				GotResult:  true,
+				Error:      errors.New("Incomplete script definition"),
 				LineNumber: GetToken(index - 1).LineNumber,
-				Reason:    WrapStr("Couldn't parse script body", bodyParseResult.Reason),
+				Reason:     WrapStr("Couldn't parse script body", bodyParseResult.Reason),
 			}
 		} else if bodyParseResult.Error != nil {
 			return bodyParseResult
@@ -1739,8 +1792,8 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			Node: AstNode{
 				Kind: AstKind_IfStatement,
 				Data: AstData_IfStatement{
-					Conditions:            conditions[:numConditions],
-					Bodies:                bodies[:numBodies],
+					Conditions: conditions[:numConditions],
+					Bodies:     bodies[:numBodies],
 				},
 			},
 			TokensConsumed: index - oldIndex,
@@ -1752,10 +1805,10 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 
 		if GetKind(index) != TokenKind_LeftCurlyBrace {
 			return ParseResult{
-				GotResult: false,
-				Error: errors.New("Incomplete script definition"),
+				GotResult:  false,
+				Error:      errors.New("Incomplete script definition"),
 				LineNumber: GetToken(startIndex).LineNumber,
-				Reason:    "First token in body of code wasn't '{'",
+				Reason:     "First token in body of code wasn't '{'",
 			}, []AstNode{}
 		}
 		index++
@@ -1767,8 +1820,8 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			}
 			if GetKind(index) == TokenKind_OutOfRange {
 				return ParseResult{
-					GotResult: true,
-					Error: errors.New("Incomplete script definition"),
+					GotResult:  true,
+					Error:      errors.New("Incomplete script definition"),
 					LineNumber: GetToken(startIndex).LineNumber,
 				}, []AstNode{}
 				break
@@ -1777,8 +1830,8 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 				break
 			} else if GetKind(index) == TokenKind_RightParenthesis {
 				return ParseResult{
-					GotResult: true,
-					Error: errors.New("Unnecessary parenthesis )"),
+					GotResult:  true,
+					Error:      errors.New("Unnecessary parenthesis )"),
 					LineNumber: GetToken(index).LineNumber,
 				}, []AstNode{}
 			} else if parseResult := ParseNewLine(index); parseResult.GotResult {

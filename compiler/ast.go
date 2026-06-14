@@ -114,6 +114,7 @@ type AstData interface {
 type AstData_Root struct {
 	BodyNodes []AstNode
 }
+
 func (astData AstData_Root) astData() {}
 
 type AstData_Assignment struct {
@@ -128,6 +129,7 @@ type AstData_Assignment struct {
 	// bytes BEFORE the 0x07. Preserved for byte-identity.
 	NewlinesBeforeEquals int
 }
+
 func (astData AstData_Assignment) astData() {}
 
 type AstData_Invocation struct {
@@ -135,9 +137,11 @@ type AstData_Invocation struct {
 	ParameterNodes                    []AstNode
 	TokensConsumedByEachParameterNode []int
 }
+
 func (astData AstData_Invocation) astData() {}
 
 type AstData_Empty struct{}
+
 func (astData AstData_Empty) astData() {}
 
 type AstData_Script struct {
@@ -145,11 +149,13 @@ type AstData_Script struct {
 	DefaultParameterNodes []AstNode
 	BodyNodes             []AstNode
 }
+
 func (astData AstData_Script) astData() {}
 
 type AstData_WhileLoop struct {
-	BodyNodes    []AstNode
+	BodyNodes []AstNode
 }
+
 func (astData AstData_WhileLoop) astData() {}
 
 // AstData_RepeatLoop is a counted `Begin { ... } Repeat <count>` loop.
@@ -160,13 +166,16 @@ type AstData_RepeatLoop struct {
 	CountNode AstNode
 	HasCount  bool
 }
+
 func (astData AstData_RepeatLoop) astData() {}
 
 // AstData_Switch is a THUG2 native switch statement. Bytecode:
-//   0x3C ValueNode 0x01
-//   ( 0x3E 0x49<introOff> CaseValues[i] CaseBodies[i] 0x49<trailOff> )*
-//   ( 0x3F 0x49<defOff> DefaultBody )?
-//   0x3D
+//
+//	0x3C ValueNode 0x01
+//	( 0x3E 0x49<introOff> CaseValues[i] CaseBodies[i] 0x49<trailOff> )*
+//	( 0x3F 0x49<defOff> DefaultBody )?
+//	0x3D
+//
 // CaseBodies/DefaultBody carry their own leading+trailing newline nodes (parsed
 // from the `{`/`}`-delimited body), so output emits them verbatim.
 type AstData_Switch struct {
@@ -176,22 +185,26 @@ type AstData_Switch struct {
 	HasDefault  bool
 	DefaultBody []AstNode
 }
+
 func (astData AstData_Switch) astData() {}
 
 type AstData_IfStatement struct {
-	Conditions            []AstNode
-	Bodies                [][]AstNode
+	Conditions []AstNode
+	Bodies     [][]AstNode
 }
+
 func (astData AstData_IfStatement) astData() {}
 
 type AstData_Comment struct {
 	CommentToken Token
 }
+
 func (astData AstData_Comment) astData() {}
 
 type AstData_LocalReference struct {
 	Node AstNode
 }
+
 func (astData AstData_LocalReference) astData() {}
 
 type AstData_Checksum struct {
@@ -199,30 +212,35 @@ type AstData_Checksum struct {
 	ChecksumToken Token
 	ChecksumBytes []byte
 }
+
 func (astData AstData_Checksum) astData() {}
 
 type AstData_Float struct {
 	FloatToken Token
 	FloatBytes []byte
 }
+
 func (astData AstData_Float) astData() {}
 
 type AstData_Integer struct {
 	IntegerToken Token
 	IntegerBytes []byte
 }
+
 func (astData AstData_Integer) astData() {}
 
 type AstData_String struct {
 	StringToken Token
 	StringBytes []byte
 }
+
 func (astData AstData_String) astData() {}
 
 type AstData_BinaryExpression struct {
 	LeftNode  AstNode
 	RightNode AstNode
 }
+
 func (astData AstData_BinaryExpression) astData() {}
 
 // AstData_FlatExpression represents a parenthesised expression containing two or
@@ -233,13 +251,26 @@ func (astData AstData_BinaryExpression) astData() {}
 type AstData_FlatExpression struct {
 	Operands  []AstNode
 	Operators []AstKind
+	// NewlinesBeforeOperator is parallel to Operators: the count of newline tokens
+	// that preceded each operator inside the parenthesised flat stream. THUG2 stores
+	// them as 0x01 bytes before the operator byte (heavily-formatted multi-line
+	// expressions like `(A * B\n + C * D)`). Empty/short => 0 for those operators.
+	NewlinesBeforeOperator []int
+	// NewlinesAfterOperator is parallel to Operators: newlines between the operator
+	// byte and the following operand (`(A +\n B)`), stored as 0x01 after the operator.
+	NewlinesAfterOperator []int
+	// TrailingNewlines is the count of newline tokens between the last operand and
+	// the closing ')' (e.g. `(A\n + B\n)`), stored as 0x01 bytes before the 0xF.
+	TrailingNewlines int
 }
+
 func (astData AstData_FlatExpression) astData() {}
 
 type AstData_Pair struct {
 	FloatNodeA AstNode
 	FloatNodeB AstNode
 }
+
 func (astData AstData_Pair) astData() {}
 
 type AstData_Vector struct {
@@ -247,35 +278,39 @@ type AstData_Vector struct {
 	FloatNodeB AstNode
 	FloatNodeC AstNode
 }
+
 func (astData AstData_Vector) astData() {}
 
 type AstData_UnaryExpression struct {
 	Node AstNode
 }
+
 func (astData AstData_UnaryExpression) astData() {}
 
 type AstData_Struct struct {
 	ElementNodes []AstNode
 }
+
 func (astData AstData_Struct) astData() {}
 
 type AstData_Array struct {
 	ElementNodes []AstNode
 }
+
 func (astData AstData_Array) astData() {}
 
 type AstData_ArrayAccess struct {
 	Array AstNode
 	Index AstNode
 }
-func (astData AstData_ArrayAccess) astData() {}
 
+func (astData AstData_ArrayAccess) astData() {}
 
 type AstData_Random struct {
 	BranchWeights []AstNode
-	Branches [][]AstNode
-	IsNoRepeat bool // true => emit 0x40 (random2/no-repeat) instead of 0x2F
-	IsRandom3  bool // true => emit 0x41 (random3, a fourth random variant); wins over IsNoRepeat
+	Branches      [][]AstNode
+	IsNoRepeat    bool // true => emit 0x40 (random2/no-repeat) instead of 0x2F
+	IsRandom3     bool // true => emit 0x41 (random3, a fourth random variant); wins over IsNoRepeat
 	// Branch0Newline: does the original have a 0x01 between the offset table and
 	// the first branch? It's per-random (formatting-driven, not type-driven), so we
 	// preserve it via a newline right after `{` instead of force-emitting it. Needed
@@ -289,6 +324,7 @@ type AstData_Random struct {
 	// and `{`; applied uniformly to every branch longjump on output.
 	LongJumpDelta int
 }
+
 func (astData AstData_Random) astData() {}
 
 // AstData_NameTableEntry carries orphan checksum names — symbols that the
@@ -306,4 +342,5 @@ type AstData_NameTableEntry struct {
 	// as a trailing `#rawhash` token after the name in __register_checksums__.
 	Hashes []int64
 }
+
 func (astData AstData_NameTableEntry) astData() {}

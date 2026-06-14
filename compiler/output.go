@@ -109,8 +109,8 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			write(0x1B)
 			stringData := node.Data.(AstData_String).StringToken.Data
 			stringData = stringData[1 : len(stringData)-1]
-			stringData = strings.Replace(stringData, "\\\\", "\\",-1)
-			stringData = strings.Replace(stringData, "\\\"", "\"",-1)
+			stringData = strings.Replace(stringData, "\\\\", "\\", -1)
+			stringData = strings.Replace(stringData, "\\\"", "\"", -1)
 			writeLittleUint32(uint32(len(stringData) + 1))
 			write([]byte(stringData)...)
 			write(0)
@@ -120,8 +120,8 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 			write(0x1C)
 			stringData := node.Data.(AstData_String).StringToken.Data
 			stringData = stringData[1 : len(stringData)-1]
-			stringData = strings.Replace(stringData, "\\\\", "\\",-1)
-			stringData = strings.Replace(stringData, "\\\"", "\"",-1)
+			stringData = strings.Replace(stringData, "\\\\", "\\", -1)
+			stringData = strings.Replace(stringData, "\\\"", "\"", -1)
 			writeLittleUint32(uint32(len(stringData) + 1))
 			write([]byte(stringData)...)
 			write(0)
@@ -204,10 +204,25 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 				// which is how THUG2 encodes `(<x> -1)` (operand, signed-literal):
 				// 0xE <x> <int -1> 0xF.
 				if i > 0 && i-1 < len(data.Operators) {
+					// Newlines stored before this operator (multi-line flat expr).
+					if i-1 < len(data.NewlinesBeforeOperator) {
+						for n := 0; n < data.NewlinesBeforeOperator[i-1]; n++ {
+							write(1)
+						}
+					}
 					operatorByte, _ := FlatOperatorByte(data.Operators[i-1])
 					write(operatorByte)
+					// Newlines stored after the operator, before this operand.
+					if i-1 < len(data.NewlinesAfterOperator) {
+						for n := 0; n < data.NewlinesAfterOperator[i-1]; n++ {
+							write(1)
+						}
+					}
 				}
 				writeBytecodeForNode(data.Operands[i])
+			}
+			for n := 0; n < data.TrailingNewlines; n++ {
+				write(1)
 			}
 			write(0xF)
 		case AstKind_Comment:
