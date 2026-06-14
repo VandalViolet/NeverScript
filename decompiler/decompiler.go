@@ -973,6 +973,28 @@ func Decompile(qb []byte) (string, error) {
             }
             index += bytesRead
 
+            // Adjacency: THUG2 packs `(A B ...)` — operands with NO operator
+            // between them — into one 0xE/0xF pair (e.g. a trailing negative
+            // literal `((..)/(..)) -1.0`). The compiler rebuilds this as a flat
+            // node with fewer operators than operands; mirror it here by
+            // collecting any further operand-start sub-expressions, space-joined.
+            for {
+                nb, e := GetByte(index)
+                if e != nil {
+                    break
+                }
+                if nb != Byte_Integer && nb != Byte_Float && nb != Byte_String &&
+                    nb != Byte_LocalString && nb != Byte_Local && nb != Byte_Checksum {
+                    break
+                }
+                moreCode, moreRead, e2 := DecompileExpression(index, indentationLevel, true, true)
+                if e2 != nil || moreRead == 0 {
+                    break
+                }
+                index += moreRead
+                expressionCode = expressionCode + " " + moreCode
+            }
+
             nextByte, err := GetByte(index)
             if err != nil {
                 return "", 0, err
