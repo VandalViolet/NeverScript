@@ -1576,19 +1576,25 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		}
 		index += valueParseResult.TokensConsumed
 
-		// Skip formatting between the value and the first case. The single 0x01 that
-		// the bytecode places after the switch value is emitted unconditionally by
-		// the compiler, so we discard newlines/comments here.
-		skipFormatting := func() {
+		// Skip formatting between the value and the first case, returning the count of
+		// newlines (which ARE bytecode — 0x01 — and must be preserved; comments are
+		// not). Most switches have a single newline after the value; some have extra.
+		skipFormatting := func() int {
+			n := 0
 			for {
 				switch GetKind(index) {
-				case TokenKind_NewLine, TokenKind_SingleLineComment, TokenKind_MultiLineComment:
+				case TokenKind_NewLine:
+					n++
+					index++
+				case TokenKind_SingleLineComment, TokenKind_MultiLineComment:
 					index++
 				default:
-					return
+					return n
 				}
 			}
 		}
+
+		newlinesAfterValue := skipFormatting()
 
 		var caseValues []AstNode
 		var caseBodies [][]AstNode
@@ -1648,11 +1654,12 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			Node: AstNode{
 				Kind: AstKind_Switch,
 				Data: AstData_Switch{
-					ValueNode:   valueParseResult.Node,
-					CaseValues:  caseValues,
-					CaseBodies:  caseBodies,
-					HasDefault:  hasDefault,
-					DefaultBody: defaultBody,
+					ValueNode:          valueParseResult.Node,
+					CaseValues:         caseValues,
+					CaseBodies:         caseBodies,
+					HasDefault:         hasDefault,
+					DefaultBody:        defaultBody,
+					NewlinesAfterValue: newlinesAfterValue,
 				},
 			},
 			TokensConsumed: index - oldIndex,

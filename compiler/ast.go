@@ -184,6 +184,10 @@ type AstData_Switch struct {
 	CaseBodies  [][]AstNode
 	HasDefault  bool
 	DefaultBody []AstNode
+	// NewlinesAfterValue is the count of 0x01 bytes between the switch value and
+	// the first case (usually 1; some switches have extra blank lines). 0 is
+	// treated as 1 (the canonical single newline) for back-compat.
+	NewlinesAfterValue int
 }
 
 func (astData AstData_Switch) astData() {}

@@ -739,10 +739,17 @@ func Decompile(qb []byte) (string, error) {
 				}
 				index += bytesRead
 
-				// Consume the single newline that follows the switch value. It is
-				// re-emitted unconditionally by the compiler, so we do not encode it.
-				if nl, _ := GetByte(index); nl == Byte_NewLine {
-					index++
+				// Count the newlines that follow the switch value (usually 1; some
+				// switches have extra blank lines before the first case). Emit them
+				// so the round-trip preserves the exact 0x01 count.
+				switchValueNewlines := 0
+				for {
+					if nl, _ := GetByte(index); nl == Byte_NewLine {
+						switchValueNewlines++
+						index++
+					} else {
+						break
+					}
 				}
 
 				var caseValues []string
@@ -827,7 +834,10 @@ func Decompile(qb []byte) (string, error) {
 					sw.WriteString(Indent(indentationLevel+1, "}\n"))
 				}
 				var sw strings.Builder
-				sw.WriteString(fmt.Sprintf("switch %s\n", switchVariableCode))
+				if switchValueNewlines < 1 {
+					switchValueNewlines = 1
+				}
+				sw.WriteString("switch " + switchVariableCode + strings.Repeat("\n", switchValueNewlines))
 				for i := range caseValues {
 					emitBody(&sw, fmt.Sprintf("case %s", caseValues[i]), caseBodies[i])
 				}

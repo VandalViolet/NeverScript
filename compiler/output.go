@@ -370,7 +370,14 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 
 			write(0x3C)
 			writeBytecodeForNode(switchData.ValueNode)
-			write(0x01) // the single newline that always follows the switch value
+			// Newlines between the switch value and the first case (usually 1).
+			switchValueNewlines := switchData.NewlinesAfterValue
+			if switchValueNewlines < 1 {
+				switchValueNewlines = 1
+			}
+			for n := 0; n < switchValueNewlines; n++ {
+				write(0x01)
+			}
 
 			introPositions := make([]int, len(switchData.CaseValues))
 			trailPositions := make([]int, len(switchData.CaseValues))
