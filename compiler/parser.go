@@ -2111,9 +2111,20 @@ func (this *AstNodeBuffer) MaybeSave(parseResult ParseResult) {
 }
 
 func TokensNotRecognisedError(tokens []Token, notRecognisedAs string) string {
+	// This builds a human-readable diagnostic, but it is called with the WHOLE
+	// remaining token slice on every FAILED parse attempt — and failed attempts
+	// are routine during normal parsing (dispatch/speculation), most discarded.
+	// Formatting all remaining tokens each time made parsing O(n^2) in file size
+	// (large scripts like allanims/cas_skater took tens of seconds / "hung"). Cap
+	// the number of tokens shown so each call is O(1).
+	const maxShown = 16
 	var messageBuilder strings.Builder
 	messageBuilder.WriteString(fmt.Sprintf("Token stream not recognised as %s: [\n", notRecognisedAs))
-	for _, token := range tokens {
+	for i, token := range tokens {
+		if i >= maxShown {
+			messageBuilder.WriteString(fmt.Sprintf("  ... (%d more tokens)\n", len(tokens)-maxShown))
+			break
+		}
 		messageBuilder.WriteString(fmt.Sprintf("  %+v,\n", token))
 	}
 	messageBuilder.WriteString("]")
