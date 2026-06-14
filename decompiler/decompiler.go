@@ -184,8 +184,10 @@ func Decompile(qb []byte) (string, error) {
             // ASCII (0x20-0x7E) so real names with path separators/dots survive
             // (e.g. `models\mainmenu_bg\mainmenu_bg.tex`); reject only control/binary
             // bytes that indicate a non-text (raw-hash) entry. The directive emitter
-            // quotes non-identifier names so they still round-trip.
-            isPrintable := len(checksumName) > 0
+            // quotes non-identifier names so they still round-trip. An EMPTY name is
+            // a legitimate entry (e.g. hash 0xffffffff, the un-special-cased empty-
+            // string CRC) — emitted as `"" #hash` — so don't reject it.
+            isPrintable := true
             for i := 0; i < len(checksumName); i++ {
                 c := checksumName[i]
                 if c < 0x20 || c > 0x7E {
