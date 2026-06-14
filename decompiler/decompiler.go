@@ -1369,6 +1369,17 @@ func Decompile(qb []byte) (string, error) {
         } else if nextByte == Byte_Equals || nextByte == Byte_EqualTo {
             index++
 
+            // The value may sit on a later line (`name =\n{ ... }` — a multi-line
+            // struct/array assignment), stored as 0x01 bytes after the 0x07. Consume
+            // and re-emit them, otherwise DecompileExpression(value) starts on the
+            // newline, fails, and the value byte (e.g. 0x03 struct) leaks to the body
+            // walker. (DecompileAssignment already does this; mirror it here.)
+            newlinesAfterEqualsCode, nlRead, err := DecompileConsecutiveNewLines(index)
+            if err != nil {
+                return "", 0, err
+            }
+            index += nlRead
+
             nextExpression, bytesRead, err := DecompileExpression(index, indentationLevel, false, shouldPadEquals)
             if err != nil {
                 // HACK? Some scripts have no value on right-hand side of '='. Not sure why.
@@ -1379,12 +1390,12 @@ func Decompile(qb []byte) (string, error) {
 
             var format string
             if shouldPadEquals {
-                format = "%s = %s"
+                format = "%s = %s%s"
             } else {
-                format = "%s=%s"
+                format = "%s=%s%s"
             }
 
-            return fmt.Sprintf(format, atomCode, nextExpression), index - initialIndex, nil
+            return fmt.Sprintf(format, atomCode, newlinesAfterEqualsCode, nextExpression), index - initialIndex, nil
         } else if nextByte == Byte_Dot {
             index++
 
