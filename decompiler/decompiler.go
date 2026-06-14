@@ -1164,8 +1164,13 @@ func Decompile(qb []byte) (string, error) {
             // but not all — randoms. Preserve it via a newline right after `{` so
             // the recompile is byte-identical (the offset table's +1 base depends
             // on it). The branch bodies themselves start AFTER this newline, so the
-            // branch decompilation below is unaffected.
-            hasBranch0Newline := index < len(qb) && qb[index] == Byte_NewLine
+            // branch decompilation below is unaffected. CRUCIAL: only treat it as a
+            // branch-0 newline when the offsets actually SKIP it (branch 0 starts
+            // past it). If branch 0 starts AT the 0x01, that newline is branch-0's
+            // own body content and the offsets carry no +1 — emitting it as a
+            // branch-0 newline would double it (and shift every offset by 1).
+            branch0Start := index + branchOffsets[0] - (4 * numberOfBranches) + 4
+            hasBranch0Newline := index < len(qb) && qb[index] == Byte_NewLine && branch0Start > index
 
             branches := make([]string, numberOfBranches)
             lastBranchSize := 0
