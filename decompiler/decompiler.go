@@ -1163,6 +1163,16 @@ func Decompile(qb []byte) (string, error) {
             index += branchOffsets[numberOfBranches-1]
             index += lastBranchSize
 
+            // The branch longjumps normally target `index` (the random's structural
+            // end). A few originals store a non-canonical target (randomEnd, derived
+            // from branch-0's longjump, lands past where the last branch's body
+            // actually ends — e.g. past an enclosing while's ENDWHILE). Capture that
+            // delta so the compiler reproduces the exact offset bytes.
+            longJumpDelta := 0
+            if randomEnd >= 0 {
+                longJumpDelta = randomEnd - index
+            }
+
             for i, branch := range branches {
                 // emit "<weight> { body }" so it round-trips through the compiler
                 branches[i] = fmt.Sprintf("%d { %s }", branchWeights[i], branch)
@@ -1174,7 +1184,11 @@ func Decompile(qb []byte) (string, error) {
             if hasBranch0Newline {
                 branchSep = "\n"
             }
-            return fmt.Sprintf("%s {%s%s }", randomKeyword, branchSep, strings.Join(branches, " ")), index - initialIndex, nil
+            deltaCode := ""
+            if longJumpDelta != 0 {
+                deltaCode = fmt.Sprintf(" %d", longJumpDelta)
+            }
+            return fmt.Sprintf("%s%s {%s%s }", randomKeyword, deltaCode, branchSep, strings.Join(branches, " ")), index - initialIndex, nil
         } else if b == Byte_RandomRange {
             index++
 

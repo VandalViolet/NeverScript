@@ -276,6 +276,13 @@ type AstData_Random struct {
 	// preserve it via a newline right after `{` instead of force-emitting it. Needed
 	// for byte-identity; the offset table's +1 base depends on it.
 	Branch0Newline bool
+	// LongJumpDelta: the original's branch short-jumps (0x2E) usually target the
+	// random's structural end (finalIndex). A few files store a NON-canonical
+	// target offset by this many bytes (e.g. SK6Ped_UniqueStateLogic, where a
+	// random is the last statement in a while loop and the jumps point past the
+	// enclosing ENDWHILE). 0 = canonical. Emitted as an integer between `random`
+	// and `{`; applied uniformly to every branch longjump on output.
+	LongJumpDelta int
 }
 func (astData AstData_Random) astData() {}
 

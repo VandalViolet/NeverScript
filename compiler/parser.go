@@ -1796,6 +1796,15 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 		isNoRepeat := GetKind(index) == TokenKind_Random2
 		index++
 
+		// Optional non-canonical branch-longjump delta: an integer between the
+		// `random` keyword and `{` (the lexer folds a leading `-` into the literal).
+		// 0/absent = canonical (jumps target the random's structural end).
+		longJumpDelta := 0
+		if GetKind(index) == TokenKind_Integer {
+			longJumpDelta, _ = strconv.Atoi(GetToken(index).Data)
+			index++
+		}
+
 		if GetKind(index) != TokenKind_LeftCurlyBrace {
 			return ParseResult{
 				GotResult: false,
@@ -1863,6 +1872,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 					Branches:       branches[:numBranches],
 					IsNoRepeat:     isNoRepeat,
 					Branch0Newline: branch0Newline,
+					LongJumpDelta:  longJumpDelta,
 				},
 			},
 			TokensConsumed: index - oldIndex,

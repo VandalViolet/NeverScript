@@ -310,9 +310,11 @@ func GenerateBytecode(compiler *BytecodeCompiler) {
 				writeLittleUint32Index(uint32(offsetValue), offsetIndex)
 			}
 
-			// update longjump offsets with real values
+			// update longjump offsets with real values. LongJumpDelta is normally 0
+			// (jumps target the random's structural end); a few originals store a
+			// non-canonical target that lands this many bytes further out.
 			for i := 0; i < numBranches-1; i++ {
-				realOffset := finalIndex - longJumpPositions[i] - 5
+				realOffset := finalIndex + data.LongJumpDelta - longJumpPositions[i] - 5
 				writeLittleUint32Index(uint32(realOffset), longJumpPositions[i]+1)
 			}
 
