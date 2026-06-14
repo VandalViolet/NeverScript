@@ -239,6 +239,23 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 						Reason:    WrapStr("Failed to parse local reference, no '>'", parseResult.Reason),
 					}
 				}
+				// A local invoked as a script: `<LoadFunction> <args>`. If an argument
+				// plausibly follows the local reference, parse the whole thing as an
+				// invocation (local as the script name). Use a cheap token-kind probe
+				// rather than a speculative ParseExpression — the latter double-parses
+				// every call (ParseInvocation re-parses) and is exponential on files
+				// full of local invocations (e.g. allanims). The minus guard mirrors
+				// the checksum case: `<x> - 1` is subtraction, not a call. `{` is left
+				// out so an `if <x> { body }` body isn't swallowed as a struct arg.
+				localConsumed := 2 + parseResult.TokensConsumed
+				if allowInvocations {
+					switch GetKind(index + localConsumed) {
+					case TokenKind_Identifier, TokenKind_RawChecksum, TokenKind_LeftAngleBracket,
+						TokenKind_Integer, TokenKind_Float, TokenKind_String, TokenKind_LocalString,
+						TokenKind_LeftParenthesis, TokenKind_LeftSquareBracket:
+						return ParseInvocation(index)
+					}
+				}
 				return ParseResult{
 					GotResult: true,
 					Node: AstNode{
@@ -1883,25 +1900,39 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 
 	ParseInvocation = func(index int) ParseResult {
 		oldIndex := index
-		if GetKind(index) != TokenKind_Identifier &&
-			GetKind(index) != TokenKind_RawChecksum &&
-			GetKind(index) != TokenKind_Return /* TODO(brandon): remove this hack. (ParseReturn() just calls ParseInvocation() because the syntax so similar) */ {
+
+		// The invoked script name is usually a checksum/identifier, but THUG2 also
+		// invokes a script stored in a LOCAL variable: `<LoadFunction> <args>`
+		// (bytecode 0x2D 0x16<name> <args>). Accept a `<local>` reference here too.
+		var scriptIdentifierNode AstNode
+		if GetKind(index) == TokenKind_LeftAngleBracket {
+			localResult := ParseChecksum(index) // parses `<x>` into a LocalReference
+			if !localResult.GotResult || localResult.Node.Kind != AstKind_LocalReference {
+				return ParseResult{GotResult: false, Reason: "Invocation local-reference name failed to parse"}
+			}
+			scriptIdentifierNode = localResult.Node
+			index += localResult.TokensConsumed
+		} else if GetKind(index) == TokenKind_Identifier ||
+			GetKind(index) == TokenKind_RawChecksum ||
+			GetKind(index) == TokenKind_Return /* TODO(brandon): remove this hack. (ParseReturn() just calls ParseInvocation() because the syntax so similar) */ {
+			scriptIdentifierNode = AstNode{
+				Kind: AstKind_Checksum,
+				Data: AstData_Checksum{
+					ChecksumToken: GetToken(index),
+					IsRawChecksum: GetKind(index) == TokenKind_RawChecksum,
+				},
+			}
+			index++
+		} else {
 			return ParseResult{
 				GotResult: false,
-				Reason:    "First token in invocation wasn't an identifier or checksum",
+				Reason:    "First token in invocation wasn't an identifier, checksum, or local reference",
 			}
-		}
-		scriptIdentifierToken := GetToken(index)
-
-		isRawChecksum := false
-		if GetKind(index) == TokenKind_RawChecksum {
-			isRawChecksum = true
 		}
 
 		var parameterNodes AstNodeBuffer
 		var tokensConsumedByEachParameterNode []int
 
-		index++
 		for { // gather parameters
 			if GetKind(index) == TokenKind_BackwardSlash && GetKind(index+1) == TokenKind_NewLine {
 				index += 2
@@ -1924,13 +1955,7 @@ func BuildAbstractSyntaxTree(parser *Parser) {
 			Node: AstNode{
 				Kind: AstKind_Invocation,
 				Data: AstData_Invocation{
-					ScriptIdentifierNode: AstNode{
-						Kind: AstKind_Checksum,
-						Data: AstData_Checksum{
-							ChecksumToken: scriptIdentifierToken,
-							IsRawChecksum: isRawChecksum,
-						},
-					},
+					ScriptIdentifierNode:              scriptIdentifierNode,
 					ParameterNodes:                    parameterNodes.Nodes,
 					TokensConsumedByEachParameterNode: tokensConsumedByEachParameterNode,
 				},
